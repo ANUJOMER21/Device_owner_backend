@@ -1,0 +1,82 @@
+# Deploy DA EMI Locker Backend to AWS (ECR + EC2)
+# Runs on push to main. Builds Docker image for linux/amd64, pushes to ECR, then SSHs to EC2 to pull and restart.
+#
+# Required GitHub Secrets:
+#   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY  - IAM user with ECR push
+#   EC2_HOST                                  - EC2 public IP or hostname (e.g. 13.63.53.154)
+#   SSH_PRIVATE_KEY                           - Contents of your .pem file (emu_locker.pem)
+#
+# Optional: set repository variable ECR_URI to override default.
+
+name: Deploy to AWS
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: # allow manual run from Actions tab
+
+env:
+  AWS_REGION: eu-north-1
+  ECR_URI: 651007120790.dkr.ecr.eu-north-1.amazonaws.com/da-emilocker-backend
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: ecr-login
+        run: |
+          aws ecr get-login-password --region ${{ env.AWS_REGION }} | \
+            docker login --username AWS --password-stdin ${{ env.AWS_REGION }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: ${{ env.ECR_URI }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy-ec2:
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    steps:
+      - name: Deploy to EC2
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ec2-user
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script_stderr: true
+          host_key_checking: false
+          script: |
+            set -e
+            export AWS_REGION=${{ env.AWS_REGION }}
+            export ECR_URI=${{ env.ECR_URI }}
+            sudo aws ecr get-login-password --region $AWS_REGION | \
+              sudo docker login --username AWS --password-stdin ${ECR_URI%%/*}
+            sudo docker pull $ECR_URI:latest
+            sudo docker stop da-emilocker-backend 2>/dev/null || true
+            sudo docker rm da-emilocker-backend 2>/dev/null || true
+            sudo docker run -d \
+              --name da-emilocker-backend \
+              --restart unless-stopped \
+              -p 8080:8080 \
+              --env-file /opt/da-emilocker-backend/.env \
+              $ECR_URI:latest
+            echo "Deployed. Health: curl http://localhost:8080/api/health"

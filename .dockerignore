@@ -1,0 +1,17 @@
+.git
+.gitignore
+.gradle
+build/
+!gradle/wrapper/gradle-wrapper.jar
+.idea
+*.iml
+*.md
+*.sh
+keys.txt
+.env
+.env.*
+uploads/
+admin-panel/
+configure_app/
+dealer_app/
+*.log

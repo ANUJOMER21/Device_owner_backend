@@ -78,5 +78,6 @@ jobs:
               --restart unless-stopped \
               -p 8080:8080 \
               --env-file /opt/da-emilocker-backend/.env \
+              -v /opt/da-emilocker-backend/firebase_config.json:/app/firebase_config.json:ro \
               $ECR_URI:latest
             echo "Deployed. Health: curl http://localhost:8080/api/health"

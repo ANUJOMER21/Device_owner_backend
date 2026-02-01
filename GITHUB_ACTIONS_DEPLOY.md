@@ -46,6 +46,9 @@ Or use the managed policy **AmazonEC2ContainerRegistryPowerUser** (or a custom p
 - **IAM role** on the EC2 instance with ECR read (e.g. `AmazonEC2ContainerRegistryReadOnly`) so it can `docker pull` from ECR.
 - **Security group**: Inbound SSH (22) from GitHub’s IPs or from anywhere (0.0.0/0) if you accept the risk. Restricting to [GitHub’s IP ranges](https://api.github.com/meta) is safer.
 - **Container and env**: The workflow assumes the container name is `da-emilocker-backend` and the env file is `/opt/da-emilocker-backend/.env` (as in the manual deploy guide).
+- **Firebase (FCM)**: For push notifications to work on EC2, place your Firebase service account JSON on the server and the workflow will mount it into the container:
+  - On EC2: create `/opt/da-emilocker-backend/firebase_config.json` (e.g. `scp firebase_config.json ec2-user@YOUR_EC2_IP:/tmp/` then on EC2: `sudo mkdir -p /opt/da-emilocker-backend && sudo mv /tmp/firebase_config.json /opt/da-emilocker-backend/ && sudo chmod 600 /opt/da-emilocker-backend/firebase_config.json`).
+  - The deploy step mounts it read-only into the container at `/app/firebase_config.json`. Do **not** commit this file to git; keep it only on EC2.
 
 ### 3. Optional: override ECR URI
 

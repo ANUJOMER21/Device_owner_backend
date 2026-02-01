@@ -42,18 +42,19 @@ class SecurityConfig(
     @Bean
     fun corsConfigurationSource(): CorsConfigurationSource {
         val configuration = CorsConfiguration()
-        // Use allowedOrigins (not allowedOriginPatterns) when allowCredentials is true
-        configuration.allowedOrigins = listOf(
+        // Use allowedOriginPatterns for wildcard support (Vercel URLs)
+        configuration.allowedOriginPatterns = listOf(
+            // Local dev (explicit + wildcard)
             "http://localhost:3000",
-            "http://127.0.0.1:3000",
-            "http://localhost:3001",
-            "http://127.0.0.1:3001",
-            // Vite dev server (admin-panel)
             "http://localhost:5173",
-            "http://127.0.0.1:5173",
-            // Vite preview / alt ports
             "http://localhost:4173",
-            "http://127.0.0.1:4173"
+            "http://127.0.0.1:3000",
+            "http://127.0.0.1:5173",
+            "http://127.0.0.1:4173",
+            "http://localhost:*",
+            "http://127.0.0.1:*",
+            // Vercel deployments (production + preview branches)
+            "https://*.vercel.app"
         )
         configuration.allowedMethods = listOf("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH", "HEAD")
         configuration.allowedHeaders = listOf("*")

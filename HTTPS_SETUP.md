@@ -2,6 +2,8 @@
 
 The admin panel (Vercel, HTTPS) was blocked from calling the backend over HTTP. Enabling HTTPS on the backend fixes this.
 
+**No-IP didn’t work?** Use **DuckDNS** or **Cloudflare Tunnel** (no domain needed). See **[FREE_HTTPS_ALTERNATIVES.md](FREE_HTTPS_ALTERNATIVES.md)**.
+
 ---
 
 ## 1. Backend changes (already done)
@@ -58,6 +60,8 @@ The admin panel (Vercel, HTTPS) was blocked from calling the backend over HTTP. 
 
 Use a **domain** pointing to your EC2 IP (e.g. `api.yourdomain.com` → 13.63.53.154), then get a free certificate (e.g. Let’s Encrypt).
 
+**Free hostname:** If you don’t have a domain, use **No-IP / FreeDNS** for a free hostname (e.g. `emi-locker-api.ddns.net`). See **[NOIP_FREEDNS_SETUP.md](NOIP_FREEDNS_SETUP.md)** for step-by-step.
+
 1. **Point a domain to EC2**  
    Create a DNS A record: `api.yourdomain.com` → `13.63.53.154`.
 
@@ -69,12 +73,14 @@ Use a **domain** pointing to your EC2 IP (e.g. `api.yourdomain.com` → 13.63.53
    # Cert and key in /etc/letsencrypt/live/api.yourdomain.com/
    ```
 
-3. **Convert to PKCS12** (certbot gives PEM; Spring Boot needs a keystore):
+3. **Convert to PKCS12** (certbot gives PEM; Spring Boot needs a keystore). Use leaf + chain so clients don’t get “chain validation failed”:
 
    ```bash
+   LE_DIR="/etc/letsencrypt/live/api.yourdomain.com"
    sudo openssl pkcs12 -export \
-     -in /etc/letsencrypt/live/api.yourdomain.com/fullchain.pem \
-     -inkey /etc/letsencrypt/live/api.yourdomain.com/privkey.pem \
+     -in "$LE_DIR/cert.pem" \
+     -inkey "$LE_DIR/privkey.pem" \
+     -certfile "$LE_DIR/chain.pem" \
      -out /opt/da-emilocker-backend/keystore.p12 \
      -name tomcat \
      -passout pass:YOUR_KEYSTORE_PASSWORD

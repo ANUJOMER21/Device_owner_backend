@@ -59,8 +59,19 @@ class FirebaseConfig(
                     logger.info("Resource URL: ${resource.uri}")
                     resource.inputStream
                 }
+                serviceAccountKeyPath.startsWith("file:") -> {
+                    // Strip "file:" prefix – e.g. file:/app/firebase_config.json -> /app/firebase_config.json
+                    val path = serviceAccountKeyPath.removePrefix("file:")
+                    logger.info("Loading Firebase config from file: $path")
+                    val file = java.io.File(path)
+                    if (!file.exists()) {
+                        throw IllegalStateException("Firebase config file not found at: $path")
+                    }
+                    logger.info("File exists, size: ${file.length()} bytes")
+                    FileInputStream(file)
+                }
                 else -> {
-                    // Try as file system path first
+                    // Try as file system path first (no prefix)
                     try {
                         logger.info("Trying to load Firebase config from file system: $serviceAccountKeyPath")
                         val file = java.io.File(serviceAccountKeyPath)

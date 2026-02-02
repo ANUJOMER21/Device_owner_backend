@@ -18,6 +18,7 @@ import org.springframework.data.domain.Pageable
 import org.springframework.data.domain.Sort
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.*
+import kotlin.math.minOf
 
 @RestController
 @RequestMapping("/api/admin")
@@ -821,19 +822,36 @@ class AdminManagementController(
         @RequestParam(defaultValue = "0") page: Int,
         @RequestParam(defaultValue = "100") pageSize: Int
     ): ResponseEntity<Map<String, Any>> {
+        // Use proper query filtering instead of loading all commands
         val pageable = PageRequest.of(page, pageSize, Sort.by(Sort.Direction.DESC, "createdAt"))
         
-        val allCommands = deviceCommandRepository.findAll(pageable)
+        // Get commands by customerId if specified, otherwise get all
+        val commands = if (customerId != null) {
+            deviceCommandRepository.findByCustomerIdOrderByCreatedAtDesc(customerId)
+                .filter { command ->
+                    (commandType == null || command.commandType == commandType) &&
+                    (status == null || command.status.name.equals(status, ignoreCase = true))
+                }
+        } else {
+            deviceCommandRepository.findAll(pageable).content
+                .filter { command ->
+                    (commandType == null || command.commandType == commandType) &&
+                    (status == null || command.status.name.equals(status, ignoreCase = true))
+                }
+        }
         
-        // Apply filters
-        val filteredCommands = allCommands.content.filter { command ->
-            (customerId == null || command.customerId == customerId) &&
-            (commandType == null || command.commandType == commandType) &&
-            (status == null || command.status.name.equals(status, ignoreCase = true))
+        // Apply pagination manually if customerId was specified
+        val total = commands.size.toLong()
+        val start = page * pageSize
+        val end = minOf(start + pageSize, commands.size)
+        val paginatedCommands = if (start < commands.size) {
+            commands.subList(start, end)
+        } else {
+            emptyList()
         }
         
         // Map to response format
-        val commandsData = filteredCommands.map { command ->
+        val commandsData = paginatedCommands.map { command ->
             mapOf(
                 "id" to (command.id ?: 0),
                 "deviceId" to command.deviceId,
@@ -855,10 +873,10 @@ class AdminManagementController(
         return ResponseEntity.ok(mapOf(
             "success" to true,
             "commands" to commandsData,
-            "total" to allCommands.totalElements,
+            "total" to total,
             "page" to page,
             "pageSize" to pageSize,
-            "totalPages" to allCommands.totalPages
+            "totalPages" to if (total > 0) ((total + pageSize - 1) / pageSize).toInt() else 0
         ))
     }
     

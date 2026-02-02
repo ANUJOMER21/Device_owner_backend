@@ -153,12 +153,12 @@ class ToggleService(
             sendFCMNotification(customer, savedCommand)
         }
         
-        // Log activity
+        // Log activity with command name
         val activity = Activity().apply {
             this.customerId = request.customerId
             this.deviceId = device.deviceId
-            this.activityType = "toggle_changed"
-            this.activityDescription = "Toggle ${request.toggleType} ${if (request.enabled) "enabled" else "disabled"}"
+            this.activityType = "command_created"
+            this.activityDescription = "Command '${commandType}' created (toggle ${request.toggleType} ${if (request.enabled) "enabled" else "disabled"})"
             this.createdAt = Instant.now()
         }
         activityRepository.save(activity)

@@ -300,17 +300,19 @@ class DeviceCommandService(
             val savedCommand = deviceCommandRepository.save(command)
 
             // Update customer status only for unlock (restore to active)
+            // IMPORTANT: Do NOT mark as uninstalled for REMOVE_DEVICE_OWNER - wait for device to call /deregister
             if (actionEnum == CommandAction.UNLOCK_DEVICE || actionEnum == CommandAction.UNLOCK_TASK) {
                 customer.status = CustomerStatus.active
                 customerRepository.save(customer)
             }
+            // Explicitly do NOT mark as uninstalled for REMOVE_DEVICE_OWNER - device must verify via /deregister endpoint
 
-            // Log activity
+            // Log activity with actual command name
             val activity = Activity().apply {
                 this.customerId = activityCustomerId
                 this.deviceId = device.deviceId
-                this.activityType = "device_${actionEnum.value}"
-                this.activityDescription = "Device ${actionEnum.value} command created"
+                this.activityType = "command_created"
+                this.activityDescription = "Command '${actionEnum.value}' created and sent to device"
                 this.createdAt = Instant.now()
             }
             activityRepository.save(activity)
@@ -438,11 +440,41 @@ class DeviceCommandService(
         command.updatedAt = Instant.now()
         deviceCommandRepository.save(command)
         
-        // Log activity
+        // Handle REMOVE_DEVICE_OWNER command verification - mark as uninstalled only when device confirms
+        if (request.success && command.commandType == "REMOVE_DEVICE_OWNER" && command.customerId != null) {
+            val customer = customerRepository.findByCustomerId(command.customerId).orElse(null)
+            if (customer != null && customer.status != CustomerStatus.uninstalled) {
+                customer.status = CustomerStatus.uninstalled
+                customer.imei1 = null
+                customer.imei2 = null
+                customer.fcmToken = null
+                customer.updatedAt = Instant.now()
+                customerRepository.save(customer)
+                
+                // Remove device_status rows for this customer
+                val deviceStatuses = deviceStatusRepository.findByCustomerId(command.customerId)
+                if (deviceStatuses.isNotEmpty()) {
+                    deviceStatusRepository.deleteAll(deviceStatuses)
+                }
+                
+                // Log uninstall activity
+                val uninstallActivity = Activity().apply {
+                    this.customerId = command.customerId
+                    this.deviceId = command.deviceId
+                    this.activityType = "device_uninstalled"
+                    this.activityDescription = "Device uninstalled - REMOVE_DEVICE_OWNER command verified by device"
+                    this.createdAt = Instant.now()
+                }
+                activityRepository.save(uninstallActivity)
+            }
+        }
+        
+        // Log activity with command name and customerId
         val activity = Activity().apply {
+            this.customerId = command.customerId
             this.deviceId = command.deviceId
-            this.activityType = "command_${if (request.success) "executed" else "failed"}"
-            this.activityDescription = "Command ${command.commandType} ${if (request.success) "executed" else "failed"}"
+            this.activityType = if (request.success) "command_executed" else "command_failed"
+            this.activityDescription = "Command '${command.commandType}' ${if (request.success) "executed successfully" else "failed: ${request.errorMessage ?: "Unknown error"}"}"
             this.createdAt = Instant.now()
         }
         activityRepository.save(activity)
@@ -683,12 +715,12 @@ class DeviceCommandService(
                     command.updatedAt = Instant.now()
                     deviceCommandRepository.save(command)
                     
-                    // Log activity
+                    // Log activity with command name
                     val activity = Activity().apply {
                         this.deviceId = command.deviceId
                         this.customerId = device.customerId
-                        this.activityType = "command_executed_online"
-                        this.activityDescription = "Queued command ${command.commandType} executed when device came online"
+                        this.activityType = "command_sent"
+                        this.activityDescription = "Command '${command.commandType}' sent to device when it came online"
                         this.createdAt = now
                     }
                     activityRepository.save(activity)
@@ -953,12 +985,12 @@ class DeviceCommandService(
             command.updatedAt = Instant.now()
             deviceCommandRepository.save(command)
             
-            // Log activity
+            // Log activity with command name
             val activity = Activity().apply {
                 this.deviceId = deviceId
                 this.customerId = device.customerId
-                this.activityType = "command_executed_online"
-                this.activityDescription = "Command ${command.commandType} executed when device came online"
+                this.activityType = "command_sent"
+                this.activityDescription = "Command '${command.commandType}' sent to device when it came online"
                 this.createdAt = now
             }
             activityRepository.save(activity)

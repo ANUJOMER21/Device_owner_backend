@@ -55,53 +55,60 @@ class CommandHistoryService(
         val dealerCustomers = customerRepository.findByDealerId(dealerId)
         val customerIds = dealerCustomers.map { it.customerId }.toSet()
         
-        // Get all device IDs for dealer's customers
-        val allDevices = if (customerIds.isNotEmpty()) {
-            deviceStatusRepository.findByCustomerIdIn(customerIds.toList())
-        } else {
-            emptyList()
+        if (customerIds.isEmpty()) {
+            return CommandHistoryResponse(
+                success = true,
+                message = "No customers found for dealer",
+                commands = emptyList(),
+                total = 0,
+                page = page,
+                pageSize = size,
+                totalPages = 0
+            )
         }
-        val deviceIds = allDevices.map { it.deviceId }.toSet()
         
         // Filter by customer if specified
-        val filteredDeviceIds = if (customerId != null) {
+        val targetCustomerIds = if (customerId != null) {
             if (!customerIds.contains(customerId)) {
                 return CommandHistoryResponse(
                     success = false,
                     message = "Access denied or customer not found"
                 )
             }
-            allDevices.filter { it.customerId == customerId }.map { it.deviceId }.toSet()
+            listOf(customerId)
         } else {
-            deviceIds
+            customerIds.toList()
         }
         
-        // Get all commands for these devices
-        val allCommands = deviceCommandRepository.findAll()
-            .filter { command ->
-                filteredDeviceIds.contains(command.deviceId) &&
+        // Get commands directly by customerId (more efficient)
+        val allCommands = targetCustomerIds.flatMap { cid ->
+            val customerCommands = deviceCommandRepository.findByCustomerId(cid)
+            customerCommands.filter { command ->
                 (commandType == null || command.commandType == commandType) &&
-                (status == null || command.status.name == status)
+                (status == null || command.status.name.equals(status, ignoreCase = true))
             }
-            .sortedByDescending { it.createdAt }
+        }.sortedByDescending { it.createdAt }
         
-        // Apply pagination manually
+        // Apply pagination
+        val total = allCommands.size.toLong()
         val start = page * size
         val end = minOf(start + size, allCommands.size)
-        val paginatedCommands = allCommands.subList(start, end)
+        val paginatedCommands = if (start < allCommands.size) {
+            allCommands.subList(start, end)
+        } else {
+            emptyList()
+        }
         
         // Create customer name map
         val customerMap = dealerCustomers.associateBy { it.customerId }
-        val deviceToCustomerMap = allDevices.associate { it.deviceId to it.customerId }
         
         val commandDataList = paginatedCommands.map { command ->
-            val customerIdForDevice = deviceToCustomerMap[command.deviceId]
-            val customer = customerIdForDevice?.let { customerMap[it] }
+            val customer = command.customerId?.let { customerMap[it] }
             
             CommandHistoryData(
                 commandId = command.id ?: 0,
                 deviceId = command.deviceId,
-                customerId = customerIdForDevice ?: "",
+                customerId = command.customerId ?: "",
                 customerName = customer?.name ?: "",
                 commandType = command.commandType,
                 commandData = command.commandData,
@@ -118,10 +125,10 @@ class CommandHistoryService(
             success = true,
             message = "Command history retrieved successfully",
             commands = commandDataList,
-            total = allCommands.size.toLong(),
+            total = total,
             page = page,
             pageSize = size,
-            totalPages = (allCommands.size + size - 1) / size
+            totalPages = if (total > 0) ((total + size - 1) / size).toInt() else 0
         )
     }
     

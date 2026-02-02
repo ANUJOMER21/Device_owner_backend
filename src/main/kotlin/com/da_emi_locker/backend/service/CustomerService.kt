@@ -686,40 +686,31 @@ class CustomerService(
         customer.fcmToken = fcmToken
         customer.updatedAt = Instant.now()
         customerRepository.save(customer)
-        val existingDevice = deviceStatusRepository.findByDeviceId(effectiveDeviceId).orElse(null)
-        if (existingDevice != null) {
-            if (existingDevice.customerId != customer.customerId) {
-                return ActivateDeviceResponse(
-                    success = false,
-                    message = "Device ID already linked to another customer"
-                )
-            }
-            existingDevice.lastSeen = Instant.now()
-            existingDevice.updatedAt = Instant.now()
-            existingDevice.status = com.da_emi_locker.backend.entity.DeviceStatusEnum.online
-            deviceStatusRepository.save(existingDevice)
+        
+        // Don't verify device ID - just use it if provided, otherwise use IMEI
+        // Always work with customer's device status record, ignore deviceId conflicts
+        val byCustomer = deviceStatusRepository.findByCustomerId(customer.customerId)
+        if (byCustomer.isNotEmpty()) {
+            // Update existing device status for this customer
+            val first = byCustomer.first()
+            first.deviceId = effectiveDeviceId // Update deviceId without verification
+            first.lastSeen = Instant.now()
+            first.updatedAt = Instant.now()
+            first.status = com.da_emi_locker.backend.entity.DeviceStatusEnum.online
+            deviceStatusRepository.save(first)
         } else {
-            val byCustomer = deviceStatusRepository.findByCustomerId(customer.customerId)
-            if (byCustomer.isNotEmpty()) {
-                val first = byCustomer.first()
-                first.deviceId = effectiveDeviceId
-                first.lastSeen = Instant.now()
-                first.updatedAt = Instant.now()
-                first.status = com.da_emi_locker.backend.entity.DeviceStatusEnum.online
-                deviceStatusRepository.save(first)
-            } else {
-                val newDevice = com.da_emi_locker.backend.entity.DeviceStatus().apply {
-                    this.deviceId = effectiveDeviceId
-                    this.customerId = customer.customerId
-                    this.deviceName = "Configure App Device"
-                    this.deviceType = "Android"
-                    this.status = com.da_emi_locker.backend.entity.DeviceStatusEnum.online
-                    this.lastSeen = Instant.now()
-                    this.createdAt = Instant.now()
-                    this.updatedAt = Instant.now()
-                }
-                deviceStatusRepository.save(newDevice)
+            // Create new device status record for this customer
+            val newDevice = com.da_emi_locker.backend.entity.DeviceStatus().apply {
+                this.deviceId = effectiveDeviceId // Use deviceId without verification
+                this.customerId = customer.customerId
+                this.deviceName = "Configure App Device"
+                this.deviceType = "Android"
+                this.status = com.da_emi_locker.backend.entity.DeviceStatusEnum.online
+                this.lastSeen = Instant.now()
+                this.createdAt = Instant.now()
+                this.updatedAt = Instant.now()
             }
+            deviceStatusRepository.save(newDevice)
         }
         val activity = Activity().apply {
             this.customerId = customer.customerId

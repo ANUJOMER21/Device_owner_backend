@@ -1,6 +1,8 @@
 package com.da_emi_locker.backend.controller
 
 import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.annotation.Value
+import org.springframework.core.env.Environment
 import org.springframework.http.MediaType
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.GetMapping
@@ -15,10 +17,15 @@ import java.util.concurrent.ConcurrentHashMap
 
 @RestController
 @RequestMapping("/api/admin/logs")
-class LogsController {
+class LogsController(
+    private val environment: Environment
+) {
     
     private val logger = LoggerFactory.getLogger(LogsController::class.java)
     private val activeEmitters = ConcurrentHashMap<String, SseEmitter>()
+    
+    @Value("\${logging.file.name:}")
+    private var loggingFileName: String = ""
     
     /**
      * Get recent logs (last N lines)
@@ -30,14 +37,29 @@ class LogsController {
     ): ResponseEntity<Map<String, Any>> {
         return try {
             val logFile = findLogFile()
+            val userDir = System.getProperty("user.dir") ?: "."
+            val expectedLogPath = File(userDir, "logs/application.log").absolutePath
+            val configuredLogFile = loggingFileName.ifBlank { 
+                environment.getProperty("logging.file.name", "logs/application.log")
+            }
+            
             if (logFile == null || !logFile.exists()) {
-                // Return empty logs instead of error - logs might be in console
+                // Return helpful message with expected location
                 return ResponseEntity.ok(mapOf(
-                    "logs" to listOf("No log file found. Logs may be going to console only. Check server console output."),
+                    "logs" to listOf(
+                        "No log file found. Logs may be going to console only.",
+                        "Expected location: $expectedLogPath",
+                        "Configured log file: $configuredLogFile",
+                        "Current directory: $userDir",
+                        "Note: Log file will be created automatically when application writes logs."
+                    ),
                     "totalLines" to 0,
                     "requestedLines" to lines,
                     "level" to (level ?: "ALL"),
-                    "message" to "Log file not found at expected locations. Logs may be configured for console output only.",
+                    "message" to "Log file not found. Check server console output or wait for logs to be written.",
+                    "expectedPath" to expectedLogPath,
+                    "configuredPath" to configuredLogFile,
+                    "searchedPaths" to getLogSearchPaths().take(10), // Show first 10 paths
                     "timestamp" to Instant.now().toString()
                 ))
             }
@@ -120,14 +142,29 @@ class LogsController {
         
         try {
             val logFile = findLogFile()
+            val userDir = System.getProperty("user.dir") ?: "."
+            val expectedLogPath = File(userDir, "logs/application.log").absolutePath
+            val configuredLogFile = loggingFileName.ifBlank { 
+                environment.getProperty("logging.file.name", "logs/application.log")
+            }
+            
             if (logFile == null || !logFile.exists()) {
                 try {
                     emitter.send(SseEmitter.event()
                         .name("log")
-                        .data("No log file found. Logs may be going to console only. Check server console output."))
+                        .data("No log file found. Logs may be going to console only."))
                     emitter.send(SseEmitter.event()
                         .name("info")
-                        .data("Searched paths: ${getLogSearchPaths().joinToString(", ")}"))
+                        .data("Expected location: $expectedLogPath"))
+                    emitter.send(SseEmitter.event()
+                        .name("info")
+                        .data("Configured log file: $configuredLogFile"))
+                    emitter.send(SseEmitter.event()
+                        .name("info")
+                        .data("Current directory: $userDir"))
+                    emitter.send(SseEmitter.event()
+                        .name("info")
+                        .data("Note: Log file will be created automatically when application writes logs."))
                     emitter.complete()
                 } catch (e: Exception) {
                     logger.error("Error sending initial SSE message", e)
@@ -201,54 +238,147 @@ class LogsController {
         val userDir = System.getProperty("user.dir") ?: "."
         val catalinaHome = System.getProperty("catalina.home") ?: ""
         
-        return listOf(
-            // Relative paths
+        // Get logging.file.name from Spring Boot configuration
+        val configuredLogFile = loggingFileName.ifBlank { 
+            environment.getProperty("logging.file.name", "")
+        }
+        
+        val paths = mutableListOf<String>()
+        
+        // First priority: Use configured logging.file.name from Spring Boot (resolve relative paths)
+        if (configuredLogFile.isNotBlank()) {
+            val logFile = File(configuredLogFile)
+            if (logFile.isAbsolute) {
+                // Absolute path - use as-is
+                paths.add(configuredLogFile)
+            } else {
+                // Relative path - resolve relative to current working directory (Spring Boot behavior)
+                val resolvedPath = File(userDir, configuredLogFile).absolutePath
+                paths.add(resolvedPath)
+                paths.add(configuredLogFile) // Also try relative to where code runs
+                // Try with normalized path
+                try {
+                    paths.add(File(userDir, configuredLogFile).canonicalPath)
+                } catch (e: Exception) {
+                    // Ignore if canonical path fails
+                }
+            }
+        }
+        
+        // Second priority: Standard relative paths (most common)
+        paths.addAll(listOf(
+            File(userDir, "logs/application.log").absolutePath,
+            File(userDir, "logs/spring.log").absolutePath,
             "logs/application.log",
             "logs/spring.log",
             "application.log",
-            "spring.log",
-            // User directory paths
+            "spring.log"
+        ))
+        
+        // Third priority: User directory paths
+        paths.addAll(listOf(
             "$userDir/logs/application.log",
             "$userDir/logs/spring.log",
-            "$userDir/application.log",
-            // Absolute paths
+            "$userDir/application.log"
+        ))
+        
+        // Fourth priority: Absolute paths
+        paths.addAll(listOf(
             "/var/log/da-emilocker/application.log",
             "/app/logs/application.log",
-            "/tmp/logs/application.log",
-            // Tomcat paths
-            if (catalinaHome.isNotEmpty()) "$catalinaHome/logs/application.log" else null,
-            // Check logging.file.name property value
-            System.getProperty("logging.file.name") ?: null,
-            System.getProperty("logging.file.path")?.let { "$it/application.log" }
-        ).filterNotNull()
+            "/tmp/logs/application.log"
+        ))
+        
+        // Fifth priority: Tomcat paths
+        if (catalinaHome.isNotEmpty()) {
+            paths.add("$catalinaHome/logs/application.log")
+        }
+        
+        // Sixth priority: System properties
+        System.getProperty("logging.file.name")?.let { 
+            paths.add(it)
+            if (!it.startsWith("/") && !it.matches(Regex("^[A-Za-z]:\\\\"))) {
+                paths.add(File(userDir, it).absolutePath)
+            }
+        }
+        System.getProperty("logging.file.path")?.let { 
+            paths.add("$it/application.log")
+            paths.add(File(it, "application.log").absolutePath)
+        }
+        
+        // Remove duplicates while preserving order
+        return paths.distinct()
     }
     
     private fun findLogFile(): File? {
         val possiblePaths = getLogSearchPaths()
+        val userDir = System.getProperty("user.dir") ?: "."
         
-        logger.debug("Searching for log file in paths: ${possiblePaths.joinToString(", ")}")
+        logger.info("Searching for log file in ${possiblePaths.size} paths")
+        logger.debug("Log file search paths: ${possiblePaths.joinToString("\n")}")
         
-        val foundFile = possiblePaths.map { path ->
+        val foundFile = possiblePaths.mapNotNull { path ->
             try {
-                File(path)
+                val file = File(path)
+                // Resolve to canonical path to handle symlinks and relative paths
+                val resolvedFile = try {
+                    if (file.isAbsolute) {
+                        file.canonicalFile
+                    } else {
+                        File(userDir, path).canonicalFile
+                    }
+                } catch (e: Exception) {
+                    // If canonical fails, try absolute path
+                    if (file.isAbsolute) file else File(userDir, path).absoluteFile
+                }
+                
+                // Check if file exists and is readable
+                if (resolvedFile.exists() && resolvedFile.isFile && resolvedFile.canRead()) {
+                    logger.info("Found log file: ${resolvedFile.absolutePath} (size: ${resolvedFile.length()} bytes)")
+                    resolvedFile
+                } else {
+                    // Also try the original path string as-is
+                    if (file.exists() && file.isFile && file.canRead()) {
+                        logger.info("Found log file: ${file.absolutePath} (size: ${file.length()} bytes)")
+                        file
+                    } else {
+                        null
+                    }
+                }
             } catch (e: Exception) {
-                logger.debug("Invalid log file path: $path", e)
+                logger.debug("Error checking log file path: $path", e)
                 null
             }
-        }.filterNotNull()
-            .firstOrNull { file ->
-                try {
-                    file.exists() && file.isFile && file.canRead()
-                } catch (e: Exception) {
-                    logger.debug("Error checking file: ${file.absolutePath}", e)
-                    false
-                }
-            }
+        }.firstOrNull()
         
-        if (foundFile != null) {
-            logger.debug("Found log file: ${foundFile.absolutePath}")
-        } else {
-            logger.debug("No log file found in any of the searched paths")
+        if (foundFile == null) {
+            val configuredLogFile = loggingFileName.ifBlank { 
+                environment.getProperty("logging.file.name", "not set")
+            }
+            logger.warn("No log file found. Searched ${possiblePaths.size} paths.")
+            logger.info("Configured log file name: $configuredLogFile")
+            logger.info("Current working directory: $userDir")
+            
+            // Try to create logs directory if it doesn't exist (for future logs)
+            try {
+                val logsDir = File(userDir, "logs")
+                if (!logsDir.exists()) {
+                    logsDir.mkdirs()
+                    logger.info("Created logs directory: ${logsDir.absolutePath}")
+                }
+                // Check if we can write to it
+                val testFile = File(logsDir, ".test")
+                testFile.createNewFile()
+                testFile.delete()
+                logger.info("Logs directory is writable: ${logsDir.absolutePath}")
+                
+                // Return the expected log file path even if it doesn't exist yet (for future logs)
+                val expectedLogFile = File(logsDir, "application.log")
+                logger.info("Expected log file location: ${expectedLogFile.absolutePath}")
+                // Don't return it if it doesn't exist - let the caller handle the "not found" case
+            } catch (e: Exception) {
+                logger.debug("Could not create/verify logs directory", e)
+            }
         }
         
         return foundFile

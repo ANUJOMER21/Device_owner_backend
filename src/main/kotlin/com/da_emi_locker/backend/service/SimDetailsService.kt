@@ -24,12 +24,27 @@ class SimDetailsService(
     )
 
     fun saveFromDevice(request: SaveSimDetailsRequest): SaveSimDetailsResponse {
-        val customer = customerRepository.findByCustomerId(request.customerId).orElse(null)
-            ?: return SaveSimDetailsResponse(success = false, message = "Customer not found")
+        // Verify customer exists
+        if (!customerRepository.findByCustomerId(request.customerId).isPresent) {
+            return SaveSimDetailsResponse(success = false, message = "Customer not found")
+        }
+        
+        // Delete all existing SIM details for this customer to keep only latest
+        val existingSimDetails = simDetailsRepository.findByCustomerIdOrderByCreatedAtDesc(
+            request.customerId, 
+            org.springframework.data.domain.PageRequest.of(0, 1000)
+        )
+        if (existingSimDetails.isNotEmpty()) {
+            simDetailsRepository.deleteAll(existingSimDetails)
+        }
+        
+        // Save new SIM details (now the only one for this customer)
         val entity = SimDetails().apply {
             customerId = request.customerId
             deviceId = request.deviceId
             simData = request.simData
+            createdAt = java.time.Instant.now()
+            updatedAt = java.time.Instant.now()
         }
         simDetailsRepository.save(entity)
         return SaveSimDetailsResponse(success = true, message = "SIM details saved")

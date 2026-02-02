@@ -6,6 +6,7 @@ import com.da_emi_locker.backend.service.DeviceCommandService
 import com.da_emi_locker.backend.service.DeviceStatusService
 import com.da_emi_locker.backend.service.SimDetailsService
 import com.da_emi_locker.backend.service.ToggleService
+import com.fasterxml.jackson.databind.ObjectMapper
 import jakarta.validation.Valid
 import jakarta.validation.constraints.NotBlank
 import org.springframework.http.ResponseEntity
@@ -19,7 +20,8 @@ class DeviceController(
     private val toggleService: ToggleService,
     private val commandHistoryService: CommandHistoryService,
     private val simDetailsService: SimDetailsService,
-    private val customerService: CustomerService
+    private val customerService: CustomerService,
+    private val objectMapper: ObjectMapper
 ) {
     
     data class DeviceActionRequestDto(
@@ -178,15 +180,36 @@ class DeviceController(
         }
         val sim = simDetailsService.getLatestByCustomerId(customerId)
         return if (sim != null) {
-            ResponseEntity.ok(mapOf(
-                "success" to true,
-                "customerId" to sim.customerId,
-                "deviceId" to (sim.deviceId ?: ""),
-                "simData" to (sim.simData ?: "{}"),
-                "createdAt" to (sim.createdAt?.toString() ?: "")
-            ))
+            val rawSimData = sim.simData ?: "{}"
+            val msisdn = try {
+                val node = objectMapper.readTree(rawSimData)
+                node.path("msisdn")
+                    .takeIf { !it.isMissingNode && !it.isNull }
+                    ?.asText()
+                    ?.takeIf { it.isNotBlank() }
+            } catch (_: Exception) {
+                null
+            }
+
+            ResponseEntity.ok(
+                mapOf(
+                    "success" to true,
+                    // Raw SIM JSON as reported by device (includes imei, msisdn, operator, networkOperator, etc.)
+                    "simData" to rawSimData,
+                    // Explicit mobile number field for dealer UI convenience; may be empty if not available
+                    "msisdn" to (msisdn ?: ""),
+                    "createdAt" to (sim.createdAt?.toString() ?: "")
+                )
+            )
         } else {
-            ResponseEntity.ok(mapOf("success" to true, "message" to "No SIM details yet", "simData" to "{}"))
+            ResponseEntity.ok(
+                mapOf(
+                    "success" to true,
+                    "message" to "No SIM details yet",
+                    "simData" to "{}",
+                    "msisdn" to ""
+                )
+            )
         }
     }
     

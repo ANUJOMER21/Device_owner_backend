@@ -7,6 +7,7 @@ import com.da_emi_locker.backend.repository.DeviceCommandRepository
 import com.da_emi_locker.backend.repository.ToggleStateRepository
 import com.da_emi_locker.backend.service.S3StorageService
 import com.da_emi_locker.backend.service.*
+import com.fasterxml.jackson.databind.ObjectMapper
 import jakarta.validation.Valid
 import jakarta.validation.constraints.NotBlank
 import org.springframework.http.HttpStatus
@@ -41,7 +42,8 @@ class AdminManagementController(
     private val toggleStateRepository: ToggleStateRepository,
     private val simDetailsService: SimDetailsService,
     private val deviceOwnerConfigService: DeviceOwnerConfigService,
-    private val s3StorageService: S3StorageService
+    private val s3StorageService: S3StorageService,
+    private val objectMapper: ObjectMapper
 ) {
     
     // Admin Dashboard
@@ -226,15 +228,34 @@ class AdminManagementController(
     fun adminGetSimDetails(@PathVariable customerId: String): ResponseEntity<Map<String, Any>> {
         val sim = simDetailsService.getLatestByCustomerId(customerId)
         return if (sim != null) {
+            val rawSimData = sim.simData ?: "{}"
+            val msisdn = try {
+                val node = objectMapper.readTree(rawSimData)
+                node.path("msisdn")
+                    .takeIf { !it.isMissingNode && !it.isNull }
+                    ?.asText()
+                    ?.takeIf { it.isNotBlank() }
+            } catch (_: Exception) {
+                null
+            }
+
             ResponseEntity.ok(mapOf(
                 "success" to true,
                 "customerId" to sim.customerId,
                 "deviceId" to (sim.deviceId ?: ""),
-                "simData" to (sim.simData ?: "{}"),
+                "simData" to rawSimData,
+                "msisdn" to (msisdn ?: ""),
                 "createdAt" to (sim.createdAt?.toString() ?: "")
             ))
         } else {
-            ResponseEntity.ok(mapOf("success" to true, "message" to "No SIM details yet", "simData" to "{}"))
+            ResponseEntity.ok(
+                mapOf(
+                    "success" to true,
+                    "message" to "No SIM details yet",
+                    "simData" to "{}",
+                    "msisdn" to ""
+                )
+            )
         }
     }
 

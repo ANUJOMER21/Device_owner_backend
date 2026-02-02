@@ -60,8 +60,11 @@ class DeviceCommandService(
         SET_WALLPAPER("SET_WALLPAPER", requiresPayload = true),
         
         // App Visibility
-        HIDE_APPS("HIDE_APPS", requiresPayload = true),
-        UNHIDE_APPS("UNHIDE_APPS", requiresPayload = true),
+        // For HIDE_APPS/UNHIDE_APPS, payload is now optional:
+        // - If payload.packages present => hide/unhide specific apps
+        // - If payload is empty/omitted => device auto-hides/unhides all user apps
+        HIDE_APPS("HIDE_APPS"),
+        UNHIDE_APPS("UNHIDE_APPS"),
         HIDE_DO_APP("HIDE_DO_APP"),
         UNHIDE_DO_APP("UNHIDE_DO_APP"),
         SUSPEND_DO_APP("SUSPEND_DO_APP"),

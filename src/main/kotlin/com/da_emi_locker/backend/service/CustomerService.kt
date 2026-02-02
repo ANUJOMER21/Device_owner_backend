@@ -687,30 +687,47 @@ class CustomerService(
         customer.updatedAt = Instant.now()
         customerRepository.save(customer)
         
-        // Don't verify device ID - just use it if provided, otherwise use IMEI
-        // Always work with customer's device status record, ignore deviceId conflicts
-        val byCustomer = deviceStatusRepository.findByCustomerId(customer.customerId)
-        if (byCustomer.isNotEmpty()) {
-            // Update existing device status for this customer
-            val first = byCustomer.first()
-            first.deviceId = effectiveDeviceId // Update deviceId without verification
-            first.lastSeen = Instant.now()
-            first.updatedAt = Instant.now()
-            first.status = com.da_emi_locker.backend.entity.DeviceStatusEnum.online
-            deviceStatusRepository.save(first)
-        } else {
-            // Create new device status record for this customer
-            val newDevice = com.da_emi_locker.backend.entity.DeviceStatus().apply {
-                this.deviceId = effectiveDeviceId // Use deviceId without verification
-                this.customerId = customer.customerId
-                this.deviceName = "Configure App Device"
-                this.deviceType = "Android"
-                this.status = com.da_emi_locker.backend.entity.DeviceStatusEnum.online
-                this.lastSeen = Instant.now()
-                this.createdAt = Instant.now()
-                this.updatedAt = Instant.now()
+        // Check if this deviceId is already linked to another customer
+        val existingByDeviceId = deviceStatusRepository.findByDeviceId(effectiveDeviceId).orElse(null)
+        if (existingByDeviceId != null && existingByDeviceId.customerId != customer.customerId) {
+            // Device is owned by a different customer - allow reassignment only when that customer is uninstalled
+            val previousOwner = customerRepository.findByCustomerId(existingByDeviceId.customerId).orElse(null)
+            if (previousOwner == null || previousOwner.status != CustomerStatus.uninstalled) {
+                return ActivateDeviceResponse(
+                    success = false,
+                    message = "This device is already in use by another customer. Activation is allowed only when the previous customer's app is uninstalled."
+                )
             }
-            deviceStatusRepository.save(newDevice)
+            // Previous owner is uninstalled: reassign this device to the current customer
+            existingByDeviceId.customerId = customer.customerId
+            existingByDeviceId.deviceName = "Configure App Device"
+            existingByDeviceId.lastSeen = Instant.now()
+            existingByDeviceId.updatedAt = Instant.now()
+            existingByDeviceId.status = com.da_emi_locker.backend.entity.DeviceStatusEnum.online
+            deviceStatusRepository.save(existingByDeviceId)
+        } else {
+            // Device not taken by another customer: use or create record for this customer
+            val byCustomer = deviceStatusRepository.findByCustomerId(customer.customerId)
+            if (byCustomer.isNotEmpty()) {
+                val first = byCustomer.first()
+                first.deviceId = effectiveDeviceId
+                first.lastSeen = Instant.now()
+                first.updatedAt = Instant.now()
+                first.status = com.da_emi_locker.backend.entity.DeviceStatusEnum.online
+                deviceStatusRepository.save(first)
+            } else {
+                val newDevice = com.da_emi_locker.backend.entity.DeviceStatus().apply {
+                    this.deviceId = effectiveDeviceId
+                    this.customerId = customer.customerId
+                    this.deviceName = "Configure App Device"
+                    this.deviceType = "Android"
+                    this.status = com.da_emi_locker.backend.entity.DeviceStatusEnum.online
+                    this.lastSeen = Instant.now()
+                    this.createdAt = Instant.now()
+                    this.updatedAt = Instant.now()
+                }
+                deviceStatusRepository.save(newDevice)
+            }
         }
         val activity = Activity().apply {
             this.customerId = customer.customerId

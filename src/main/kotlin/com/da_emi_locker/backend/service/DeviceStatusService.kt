@@ -135,14 +135,19 @@ class DeviceStatusService(
         // Check if device is coming online
         val wasOffline = device.status != DeviceStatusEnum.online
         
-        // Update device status
-        request.status?.let {
+        // Update device status.
+        // If the status field is omitted, treat any heartbeat as the device being online
+        // so that dealer UI does not keep showing "Offline" while lastSeen keeps updating.
+        if (request.status.isNullOrBlank()) {
+            device.status = DeviceStatusEnum.online
+        } else {
+            val rawStatus = request.status.trim()
             try {
-                device.status = DeviceStatusEnum.valueOf(it.lowercase())
+                device.status = DeviceStatusEnum.valueOf(rawStatus.lowercase())
             } catch (e: IllegalArgumentException) {
                 return UpdateDeviceStatusResponse(
                     success = false,
-                    message = "Invalid status: $it"
+                    message = "Invalid status: $rawStatus"
                 )
             }
         }
@@ -197,16 +202,22 @@ class DeviceStatusService(
     }
     
     private fun checkDeviceLocked(deviceId: String): Boolean {
-        // Check for lock command in pending/executing state
+        // Check for lock-related commands in an active state.
+        // We consider both LOCK_DEVICE and LOCK_TASK commands as indicating a locked device.
+        val activeStatuses = listOf(
+            com.da_emi_locker.backend.entity.CommandStatus.pending,
+            com.da_emi_locker.backend.entity.CommandStatus.sent,
+            com.da_emi_locker.backend.entity.CommandStatus.executing,
+            com.da_emi_locker.backend.entity.CommandStatus.executed
+        )
+        val lockCommandTypes = setOf(
+            DeviceCommandService.CommandAction.LOCK_DEVICE.value,
+            DeviceCommandService.CommandAction.LOCK_TASK.value
+        )
         val lockCommands = deviceCommandRepository.findByDeviceId(deviceId)
-            .filter { 
-                it.commandType == "lock" && 
-                it.status in listOf(
-                    com.da_emi_locker.backend.entity.CommandStatus.pending,
-                    com.da_emi_locker.backend.entity.CommandStatus.sent,
-                    com.da_emi_locker.backend.entity.CommandStatus.executing,
-                    com.da_emi_locker.backend.entity.CommandStatus.executed
-                )
+            .filter { command ->
+                command.commandType in lockCommandTypes &&
+                    command.status in activeStatuses
             }
         return lockCommands.isNotEmpty()
     }

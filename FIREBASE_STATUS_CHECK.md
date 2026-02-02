@@ -95,7 +95,24 @@ Look for:
 - `Firebase config file not found` – path wrong or file missing at startup.
 - `Failed to load Google credentials` – file is not valid JSON or not a valid service account key.
 - `Failed to initialize Firebase` – see the line after for the exact exception.
+- **`Permission denied`** – file exists but the app user in the container cannot read it (see 3.5).
 - `Firebase initialized successfully` – initialization succeeded.
+
+### 3.5 Permission denied (file exists but app cannot read it)
+
+If logs show **`File exists, size: ... bytes`** then **`Permission denied`**, the file is mounted but the app process (non-root user `app` in the container) cannot read it because the host file is owned by root with mode `600`.
+
+**Fix on EC2:** make the file readable by others (so the container user can read it):
+
+```bash
+sudo chmod 644 /opt/da-emilocker-backend/firebase_config.json
+```
+
+No container restart needed; the next Firebase init attempt (or a restart) will pick it up. To force immediately:
+
+```bash
+sudo docker restart da-emilocker-backend
+```
 
 Full recent logs (no filter):
 

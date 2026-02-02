@@ -12,6 +12,8 @@ import java.time.Instant
 
 @Repository
 interface PaymentHistoryRepository : JpaRepository<PaymentHistory, Long> {
+
+    fun findByCustomerId(customerId: String): List<PaymentHistory>
     
     @Query("""
         SELECT ph FROM PaymentHistory ph

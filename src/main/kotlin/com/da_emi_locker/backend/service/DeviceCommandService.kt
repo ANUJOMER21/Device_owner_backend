@@ -23,6 +23,7 @@ class DeviceCommandService(
     private val deviceStatusRepository: DeviceStatusRepository,
     private val customerRepository: CustomerRepository,
     private val activityRepository: ActivityRepository,
+    private val customerService: CustomerService,
     private val fcmService: FCMService,
     private val objectMapper: com.fasterxml.jackson.databind.ObjectMapper
 ) {
@@ -440,33 +441,36 @@ class DeviceCommandService(
         command.updatedAt = Instant.now()
         deviceCommandRepository.save(command)
         
-        // Handle REMOVE_DEVICE_OWNER command verification - mark as uninstalled only when device confirms
+        // Handle REMOVE_DEVICE_OWNER command verification - if pendingDeletion, cascade delete; else mark uninstalled
         val customerId = command.customerId // Store in local variable to avoid smart cast issues
         if (request.success && command.commandType == "REMOVE_DEVICE_OWNER" && customerId != null) {
             val customer = customerRepository.findByCustomerId(customerId).orElse(null)
-            if (customer != null && customer.status != CustomerStatus.uninstalled) {
-                customer.status = CustomerStatus.uninstalled
-                customer.imei1 = null
-                customer.imei2 = null
-                customer.fcmToken = null
-                customer.updatedAt = Instant.now()
-                customerRepository.save(customer)
-                
-                // Remove device_status rows for this customer
-                val deviceStatuses = deviceStatusRepository.findByCustomerId(customerId)
-                if (deviceStatuses.isNotEmpty()) {
-                    deviceStatusRepository.deleteAll(deviceStatuses)
+            if (customer != null) {
+                if (customer.pendingDeletion) {
+                    customerService.performCascadeDelete(customerId, customer.dealerId)
+                    return VerifyCommandResponse(
+                        success = true,
+                        message = "Command verification recorded; customer deleted and one kit returned to dealer."
+                    )
                 }
-                
-                // Log uninstall activity
-                val uninstallActivity = Activity().apply {
-                    this.customerId = customerId // Use local variable
-                    this.deviceId = command.deviceId
-                    this.activityType = "device_uninstalled"
-                    this.activityDescription = "Device uninstalled - REMOVE_DEVICE_OWNER command verified by device"
-                    this.createdAt = Instant.now()
+                if (customer.status != CustomerStatus.uninstalled) {
+                    customer.status = CustomerStatus.uninstalled
+                    customer.imei1 = null
+                    customer.imei2 = null
+                    customer.fcmToken = null
+                    customer.updatedAt = Instant.now()
+                    customerRepository.save(customer)
+                    val deviceStatuses = deviceStatusRepository.findByCustomerId(customerId)
+                    if (deviceStatuses.isNotEmpty()) deviceStatusRepository.deleteAll(deviceStatuses)
+                    val uninstallActivity = Activity().apply {
+                        this.customerId = customerId
+                        this.deviceId = command.deviceId
+                        this.activityType = "device_uninstalled"
+                        this.activityDescription = "Device uninstalled - REMOVE_DEVICE_OWNER command verified by device"
+                        this.createdAt = Instant.now()
+                    }
+                    activityRepository.save(uninstallActivity)
                 }
-                activityRepository.save(uninstallActivity)
             }
         }
         
@@ -507,7 +511,7 @@ class DeviceCommandService(
     )
 
     fun sendCommandByFcmToken(request: SendCommandByTokenRequest): SendCommandByTokenResponse {
-        val token = request.fcmToken?.trim().orEmpty()
+        val token = request.fcmToken.trim()
         if (token.isBlank()) {
             return SendCommandByTokenResponse(success = false, message = "FCM token is required")
         }

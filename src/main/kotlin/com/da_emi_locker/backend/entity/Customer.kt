@@ -57,6 +57,10 @@ class Customer : BaseEntity() {
 
     @Column(name = "offline_unlock_code", unique = true, length = 32)
     var offlineUnlockCode: String? = null
+
+    /** When true, admin requested delete for installed/active customer; full delete will run after device verifies REMOVE_DEVICE_OWNER. */
+    @Column(name = "pending_deletion", nullable = false)
+    var pendingDeletion: Boolean = false
 }
 
 enum class CustomerStatus {

@@ -586,7 +586,6 @@ class AdminManagementController(
     
     @DeleteMapping("/customers/{customerId}")
     fun deleteCustomer(@PathVariable customerId: String): ResponseEntity<CustomerService.CustomerResponse> {
-        // Admin can delete any customer
         val customerOpt = customerRepository.findByCustomerId(customerId)
         if (customerOpt.isEmpty) {
             return ResponseEntity.status(404).body(
@@ -596,15 +595,31 @@ class AdminManagementController(
                 )
             )
         }
-        
         val customer = customerOpt.get()
         val response = customerService.deleteCustomer(customerId, customer.dealerId)
-        
-        return if (response.success) {
-            ResponseEntity.ok(response)
-        } else {
-            ResponseEntity.status(400).body(response)
+        if (!response.success) {
+            return ResponseEntity.status(400).body(response)
         }
+        // If installed/active, we set pendingDeletion and must send REMOVE_DEVICE_OWNER; customer is deleted after device verification
+        if (response.pendingVerification) {
+            val cmdResponse = deviceCommandService.executeDeviceActionAsAdmin(
+                DeviceCommandService.DeviceActionRequest(
+                    customerId = customerId,
+                    action = "REMOVE_DEVICE_OWNER",
+                    reason = null,
+                    payload = null
+                )
+            )
+            if (!cmdResponse.success) {
+                return ResponseEntity.status(500).body(
+                    CustomerService.CustomerResponse(
+                        success = false,
+                        message = "Delete requested but REMOVE_DEVICE_OWNER failed: ${cmdResponse.message}"
+                    )
+                )
+            }
+        }
+        return ResponseEntity.ok(response)
     }
     
     // Admin send command to dealer's customer

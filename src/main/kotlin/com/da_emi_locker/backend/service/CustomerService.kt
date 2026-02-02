@@ -4,15 +4,21 @@ import com.da_emi_locker.backend.entity.Activity
 import com.da_emi_locker.backend.entity.Customer
 import com.da_emi_locker.backend.entity.CustomerStatus
 import com.da_emi_locker.backend.entity.Dealer
+import com.da_emi_locker.backend.repository.AadharDetailsRepository
 import com.da_emi_locker.backend.repository.ActivityRepository
 import com.da_emi_locker.backend.repository.CustomerRepository
 import com.da_emi_locker.backend.repository.DealerRepository
 import com.da_emi_locker.backend.repository.DeviceCommandRepository
 import com.da_emi_locker.backend.repository.DeviceStatusRepository
+import com.da_emi_locker.backend.repository.LoanDetailsRepository
+import com.da_emi_locker.backend.repository.PANDetailsRepository
+import com.da_emi_locker.backend.repository.PaymentHistoryRepository
+import com.da_emi_locker.backend.repository.SimDetailsRepository
 import com.da_emi_locker.backend.repository.ToggleStateRepository
 import org.springframework.data.domain.Page
 import org.springframework.data.domain.PageRequest
 import org.springframework.data.domain.Pageable
+import org.springframework.data.domain.Sort
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.time.Instant
@@ -25,7 +31,12 @@ class CustomerService(
     private val activityRepository: ActivityRepository,
     private val deviceStatusRepository: DeviceStatusRepository,
     private val toggleStateRepository: ToggleStateRepository,
-    private val deviceCommandRepository: DeviceCommandRepository
+    private val deviceCommandRepository: DeviceCommandRepository,
+    private val simDetailsRepository: SimDetailsRepository,
+    private val paymentHistoryRepository: PaymentHistoryRepository,
+    private val loanDetailsRepository: LoanDetailsRepository,
+    private val panDetailsRepository: PANDetailsRepository,
+    private val aadharDetailsRepository: AadharDetailsRepository
 ) {
     
     data class CreateCustomerRequest(
@@ -52,7 +63,9 @@ class CustomerService(
     data class CustomerResponse(
         val success: Boolean,
         val message: String,
-        val customer: CustomerData? = null
+        val customer: CustomerData? = null,
+        /** When true, REMOVE_DEVICE_OWNER was sent; caller should send the command; customer will be deleted after device verification. */
+        val pendingVerification: Boolean = false
     )
     
     data class CustomerListResponse(
@@ -625,6 +638,44 @@ class CustomerService(
         )
     }
 
+    /**
+     * Delete customer and all related data; reverses one kit to dealer (used count decreases automatically).
+     * Call this after REMOVE_DEVICE_OWNER verification when pendingDeletion is set, or when customer is not installed/active.
+     */
+    @Transactional
+    fun performCascadeDelete(customerId: String, dealerId: String): CustomerResponse {
+        val customer = customerRepository.findByCustomerId(customerId)
+            .orElse(null) ?: return CustomerResponse(
+                success = false,
+                message = "Customer not found"
+            )
+        if (customer.dealerId != dealerId) {
+            return CustomerResponse(success = false, message = "Access denied")
+        }
+        val customerName = customer.name
+        val deviceIds = deviceStatusRepository.findByCustomerId(customerId).map { it.deviceId }
+        // Delete toggle states for this customer's devices
+        deviceIds.forEach { deviceId ->
+            val toggles = toggleStateRepository.findByDeviceId(deviceId)
+            if (toggles.isNotEmpty()) toggleStateRepository.deleteAll(toggles)
+        }
+        deviceCommandRepository.findByCustomerId(customerId).let { if (it.isNotEmpty()) deviceCommandRepository.deleteAll(it) }
+        activityRepository.findByCustomerId(customerId).let { if (it.isNotEmpty()) activityRepository.deleteAll(it) }
+        deviceStatusRepository.findByCustomerId(customerId).let { if (it.isNotEmpty()) deviceStatusRepository.deleteAll(it) }
+        simDetailsRepository.findByCustomerIdOrderByCreatedAtDesc(customerId, PageRequest.of(0, 10_000, Sort.by(Sort.Direction.DESC, "createdAt"))).let { if (it.isNotEmpty()) simDetailsRepository.deleteAll(it) }
+        paymentHistoryRepository.findByCustomerId(customerId).let { if (it.isNotEmpty()) paymentHistoryRepository.deleteAll(it) }
+        loanDetailsRepository.findByCustomerId(customerId).let { if (it.isNotEmpty()) loanDetailsRepository.deleteAll(it) }
+        panDetailsRepository.findByCustomerId(customerId).ifPresent { panDetailsRepository.delete(it) }
+        aadharDetailsRepository.findByCustomerId(customerId).ifPresent { aadharDetailsRepository.delete(it) }
+        customerRepository.delete(customer)
+        return CustomerResponse(success = true, message = "Customer $customerName and all related data deleted. One kit returned to dealer.")
+    }
+
+    /**
+     * Admin/dealer delete customer. If customer is installed or active, sets pendingDeletion and returns pendingVerification;
+     * caller must send REMOVE_DEVICE_OWNER; after device verification we call performCascadeDelete.
+     * Otherwise performs cascade delete immediately (all related data deleted, one kit effectively returned to dealer).
+     */
     @Transactional
     fun deleteCustomer(customerId: String, dealerId: String): CustomerResponse {
         val customer = customerRepository.findByCustomerId(customerId)
@@ -632,34 +683,21 @@ class CustomerService(
                 success = false,
                 message = "Customer not found"
             )
-        
-        // Verify customer belongs to dealer
         if (customer.dealerId != dealerId) {
+            return CustomerResponse(success = false, message = "Access denied")
+        }
+        val isInstalledOrActive = customer.status == CustomerStatus.installed || customer.status == CustomerStatus.active
+        if (isInstalledOrActive) {
+            customer.pendingDeletion = true
+            customer.updatedAt = Instant.now()
+            customerRepository.save(customer)
             return CustomerResponse(
-                success = false,
-                message = "Access denied"
+                success = true,
+                message = "REMOVE_DEVICE_OWNER will be sent to the device. Customer will be deleted after device verification. One kit will be returned to the dealer.",
+                pendingVerification = true
             )
         }
-        
-        val customerName = customer.name
-        
-        // Delete customer (hard delete)
-        customerRepository.delete(customer)
-        
-        // Log activity
-        val activity = Activity().apply {
-            this.customerId = customerId
-            this.deviceId = null
-            this.activityType = "customer_deleted"
-            this.activityDescription = "Customer $customerName deleted"
-            this.createdAt = Instant.now()
-        }
-        activityRepository.save(activity)
-        
-        return CustomerResponse(
-            success = true,
-            message = "Customer deleted successfully"
-        )
+        return performCascadeDelete(customerId, dealerId)
     }
     
     /**

@@ -441,8 +441,9 @@ class DeviceCommandService(
         deviceCommandRepository.save(command)
         
         // Handle REMOVE_DEVICE_OWNER command verification - mark as uninstalled only when device confirms
-        if (request.success && command.commandType == "REMOVE_DEVICE_OWNER" && command.customerId != null) {
-            val customer = customerRepository.findByCustomerId(command.customerId).orElse(null)
+        val customerId = command.customerId // Store in local variable to avoid smart cast issues
+        if (request.success && command.commandType == "REMOVE_DEVICE_OWNER" && customerId != null) {
+            val customer = customerRepository.findByCustomerId(customerId).orElse(null)
             if (customer != null && customer.status != CustomerStatus.uninstalled) {
                 customer.status = CustomerStatus.uninstalled
                 customer.imei1 = null
@@ -452,14 +453,14 @@ class DeviceCommandService(
                 customerRepository.save(customer)
                 
                 // Remove device_status rows for this customer
-                val deviceStatuses = deviceStatusRepository.findByCustomerId(command.customerId)
+                val deviceStatuses = deviceStatusRepository.findByCustomerId(customerId)
                 if (deviceStatuses.isNotEmpty()) {
                     deviceStatusRepository.deleteAll(deviceStatuses)
                 }
                 
                 // Log uninstall activity
                 val uninstallActivity = Activity().apply {
-                    this.customerId = command.customerId
+                    this.customerId = customerId // Use local variable
                     this.deviceId = command.deviceId
                     this.activityType = "device_uninstalled"
                     this.activityDescription = "Device uninstalled - REMOVE_DEVICE_OWNER command verified by device"
@@ -470,8 +471,9 @@ class DeviceCommandService(
         }
         
         // Log activity with command name and customerId
+        val activityCustomerId = command.customerId // Store in local variable to avoid smart cast issues
         val activity = Activity().apply {
-            this.customerId = command.customerId
+            this.customerId = activityCustomerId
             this.deviceId = command.deviceId
             this.activityType = if (request.success) "command_executed" else "command_failed"
             this.activityDescription = "Command '${command.commandType}' ${if (request.success) "executed successfully" else "failed: ${request.errorMessage ?: "Unknown error"}"}"

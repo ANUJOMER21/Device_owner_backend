@@ -18,7 +18,6 @@ import org.springframework.data.domain.Pageable
 import org.springframework.data.domain.Sort
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.*
-import kotlin.math.minOf
 
 @RestController
 @RequestMapping("/api/admin")
@@ -843,7 +842,7 @@ class AdminManagementController(
         // Apply pagination manually if customerId was specified
         val total = commands.size.toLong()
         val start = page * pageSize
-        val end = minOf(start + pageSize, commands.size)
+        val end = if (start + pageSize < commands.size) start + pageSize else commands.size
         val paginatedCommands = if (start < commands.size) {
             commands.subList(start, end)
         } else {

@@ -128,10 +128,6 @@ class DeviceCommandService(
         DOWNLOAD_BLOCK("DOWNLOAD_BLOCK"),
         DOWNLOAD_UNBLOCK("DOWNLOAD_UNBLOCK"),
         
-        // Device owner password
-        RESET_PASSWORD("RESET_PASSWORD", requiresPayload = true),
-        REMOVE_PASSWORD("REMOVE_PASSWORD"),
-        
         // Legacy/compatibility
         UNLOCK_DEVICE("UNLOCK_DEVICE"),
         TOGGLE("TOGGLE"),

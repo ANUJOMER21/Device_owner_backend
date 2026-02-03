@@ -24,6 +24,7 @@ class DeviceCommandService(
     private val customerRepository: CustomerRepository,
     private val activityRepository: ActivityRepository,
     private val customerService: CustomerService,
+    private val s3StorageService: S3StorageService,
     private val fcmService: FCMService,
     private val objectMapper: com.fasterxml.jackson.databind.ObjectMapper
 ) {
@@ -436,6 +437,17 @@ class DeviceCommandService(
         
         command.updatedAt = Instant.now()
         deviceCommandRepository.save(command)
+        
+        // On SET_WALLPAPER verification success, delete the wallpaper file from S3 (was uploaded via /api/devices/wallpaper)
+        if (request.success && command.commandType == "SET_WALLPAPER") {
+            val url = command.commandData?.trim()?.takeIf { it.isNotBlank() }?.let { data ->
+                try {
+                    val node = objectMapper.readTree(data)
+                    node.path("url").takeIf { !it.isMissingNode && !it.isNull }?.asText()?.takeIf { it.isNotBlank() }
+                } catch (_: Exception) { null }
+            }
+            if (!url.isNullOrBlank()) s3StorageService.deleteObjectByUrl(url)
+        }
         
         // Handle REMOVE_DEVICE_OWNER command verification - if pendingDeletion, cascade delete; else mark uninstalled
         val customerId = command.customerId // Store in local variable to avoid smart cast issues

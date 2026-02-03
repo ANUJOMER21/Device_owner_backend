@@ -4,13 +4,16 @@ import com.da_emi_locker.backend.service.CommandHistoryService
 import com.da_emi_locker.backend.service.CustomerService
 import com.da_emi_locker.backend.service.DeviceCommandService
 import com.da_emi_locker.backend.service.DeviceStatusService
+import com.da_emi_locker.backend.service.S3StorageService
 import com.da_emi_locker.backend.service.SimDetailsService
 import com.da_emi_locker.backend.service.ToggleService
 import com.fasterxml.jackson.databind.ObjectMapper
 import jakarta.validation.Valid
 import jakarta.validation.constraints.NotBlank
+import org.springframework.http.MediaType
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.*
+import org.springframework.web.multipart.MultipartFile
 
 @RestController
 @RequestMapping("/api/devices")
@@ -21,6 +24,7 @@ class DeviceController(
     private val commandHistoryService: CommandHistoryService,
     private val simDetailsService: SimDetailsService,
     private val customerService: CustomerService,
+    private val s3StorageService: S3StorageService,
     private val objectMapper: ObjectMapper
 ) {
     
@@ -66,6 +70,58 @@ class DeviceController(
         val data: T? = null
     )
     
+    /** Wallpaper upload: dealer sends image; stored in S3; returns public URL for SET_WALLPAPER command. */
+    @PostMapping(value = ["/wallpaper"], consumes = [MediaType.MULTIPART_FORM_DATA_VALUE])
+    fun uploadWallpaper(
+        @RequestAttribute("dealerId") dealerId: String?,
+        @RequestParam customerId: String,
+        @RequestParam image: MultipartFile
+    ): ResponseEntity<ApiResponse<Map<String, String>?>> {
+        if (dealerId == null) {
+            return ResponseEntity.status(401).body(
+                ApiResponse(success = false, message = "Unauthorized", data = null)
+            )
+        }
+        val cid = customerId.trim()
+        if (cid.isBlank()) {
+            return ResponseEntity.status(400).body(
+                ApiResponse(success = false, message = "customerId is required", data = null)
+            )
+        }
+        if (!simDetailsService.customerBelongsToDealer(cid, dealerId)) {
+            return ResponseEntity.status(403).body(
+                ApiResponse(success = false, message = "Access denied to this customer", data = null)
+            )
+        }
+        val contentType = image.contentType?.lowercase() ?: ""
+        if (image.isEmpty) {
+            return ResponseEntity.status(400).body(
+                ApiResponse(success = false, message = "image file is required", data = null)
+            )
+        }
+        if (!contentType.contains("jpeg") && !contentType.contains("jpg") && !contentType.contains("png")) {
+            return ResponseEntity.status(400).body(
+                ApiResponse(success = false, message = "image must be JPEG or PNG", data = null)
+            )
+        }
+        if (!s3StorageService.isConfigured()) {
+            return ResponseEntity.status(503).body(
+                ApiResponse(success = false, message = "S3 storage is not configured", data = null)
+            )
+        }
+        val url = s3StorageService.uploadWallpaper(image)
+            ?: return ResponseEntity.status(500).body(
+                ApiResponse(success = false, message = "Upload failed", data = null)
+            )
+        return ResponseEntity.ok(
+            ApiResponse(
+                success = true,
+                message = "Wallpaper uploaded successfully",
+                data = mapOf("url" to url)
+            )
+        )
+    }
+
     @PostMapping("/action")
     fun executeDeviceAction(
         @RequestAttribute("dealerId") dealerId: String?,

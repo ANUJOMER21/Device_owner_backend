@@ -301,7 +301,8 @@ class CustomerService(
         dealerId: String,
         status: String? = null,
         page: Int = 0,
-        size: Int = 20
+        size: Int = 20,
+        salesExecutiveId: String? = null
     ): CustomerListResponse {
         val pageable: Pageable = PageRequest.of(page, size)
         val customers: Page<Customer>
@@ -315,9 +316,26 @@ class CustomerService(
                     message = "Invalid status: $status"
                 )
             }
-            customers = customerRepository.findByDealerIdAndStatus(dealerId, customerStatus, pageable)
+
+            customers = if (salesExecutiveId != null) {
+                // Sales executive: only their customers, filtered by status
+                customerRepository.findBySalesExecutiveIdAndStatus(
+                    salesExecutiveId,
+                    customerStatus,
+                    pageable
+                )
+            } else {
+                // Dealer: all dealer customers, filtered by status
+                customerRepository.findByDealerIdAndStatus(dealerId, customerStatus, pageable)
+            }
         } else {
-            customers = customerRepository.findByDealerId(dealerId, pageable)
+            customers = if (salesExecutiveId != null) {
+                // Sales executive: only their customers
+                customerRepository.findBySalesExecutiveId(salesExecutiveId, pageable)
+            } else {
+                // Dealer: all dealer customers
+                customerRepository.findByDealerId(dealerId, pageable)
+            }
         }
         
         // Get device statuses for all customers in this page

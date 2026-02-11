@@ -32,6 +32,10 @@ interface CustomerRepository : JpaRepository<Customer, Long> {
     fun countBySalesExecutiveId(salesExecutiveId: String): Long
 
     fun findBySalesExecutiveId(salesExecutiveId: String): List<Customer>
+
+    fun findBySalesExecutiveId(salesExecutiveId: String, pageable: Pageable): Page<Customer>
+
+    fun findBySalesExecutiveIdAndStatus(salesExecutiveId: String, status: CustomerStatus, pageable: Pageable): Page<Customer>
     
     fun existsByImei1(imei1: String): Boolean
     

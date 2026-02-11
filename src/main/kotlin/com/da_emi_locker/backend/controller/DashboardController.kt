@@ -33,7 +33,10 @@ class DashboardController(
     )
     
     @GetMapping("/stats")
-    fun getDashboardStats(@RequestAttribute("dealerId") dealerId: String?): ResponseEntity<ApiResponse<DashboardStatsDto>> {
+    fun getDashboardStats(
+        @RequestAttribute("dealerId") dealerId: String?,
+        @RequestAttribute(value = "salesExecutiveId", required = false) salesExecutiveId: String?
+    ): ResponseEntity<ApiResponse<DashboardStatsDto>> {
         if (dealerId == null) {
             return ResponseEntity.status(401).body(
                 ApiResponse(
@@ -42,8 +45,11 @@ class DashboardController(
                 )
             )
         }
-        
-        val response = dashboardService.getDashboardStats(dealerId)
+
+        val response = dashboardService.getDashboardStats(
+            dealerId = dealerId,
+            salesExecutiveId = salesExecutiveId
+        )
         
         return if (response.success && response.stats != null) {
             val s = response.stats

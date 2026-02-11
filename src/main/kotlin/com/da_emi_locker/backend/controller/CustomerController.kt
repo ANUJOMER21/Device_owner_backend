@@ -104,6 +104,7 @@ class CustomerController(
     @GetMapping
     fun getCustomers(
         @RequestAttribute("dealerId") dealerId: String?,
+        @RequestAttribute(value = "salesExecutiveId", required = false) salesExecutiveId: String?,
         @RequestParam(required = false) status: String?,
         @RequestParam(defaultValue = "0") page: Int,
         @RequestParam(defaultValue = "20") size: Int
@@ -116,8 +117,14 @@ class CustomerController(
                 )
             )
         }
-        
-        val response = customerService.getCustomers(dealerId, status, page, size)
+
+        val response = customerService.getCustomers(
+            dealerId = dealerId,
+            status = status,
+            page = page,
+            size = size,
+            salesExecutiveId = salesExecutiveId
+        )
         
         return if (response.success && response.customers != null) {
             val customerDtos = response.customers.map { customerData ->

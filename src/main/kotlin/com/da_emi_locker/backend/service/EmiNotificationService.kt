@@ -183,7 +183,9 @@ class EmiNotificationService(
         // Sort: overdue first (most overdue at top), then upcoming (soonest first)
         dueCustomers.sortBy { it.daysUntilDue }
 
-        val overdue = dueCustomers.count { it.daysUntilDue < 0 }
+        // We no longer rely on "overdue" counts for business logic; keep 0 to avoid
+        // implying payment status. The UI can still use dueDate for context.
+        val overdue = 0
         val dueToday = dueCustomers.count { it.daysUntilDue == 0L }
         val upcoming = dueCustomers.count { it.daysUntilDue > 0 }
 
@@ -342,7 +344,9 @@ class EmiNotificationService(
 
         dueCustomers.sortBy { it.daysUntilDue }
 
-        val overdue = dueCustomers.count { it.daysUntilDue < 0 }
+        // We no longer rely on "overdue" counts for business logic; keep 0 to avoid
+        // implying payment status. The UI can still use dueDate for context.
+        val overdue = 0
         val dueToday = dueCustomers.count { it.daysUntilDue == 0L }
         val upcoming = dueCustomers.count { it.daysUntilDue > 0 }
 

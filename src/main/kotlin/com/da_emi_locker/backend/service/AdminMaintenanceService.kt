@@ -1,10 +1,9 @@
 package com.da_emi_locker.backend.service
 
 import com.da_emi_locker.backend.repository.*
-import org.springframework.beans.factory.annotation.Value
-import org.springframework.security.crypto.password.PasswordEncoder
 import jakarta.transaction.Transactional
 import org.springframework.beans.factory.annotation.Value
+import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.stereotype.Service
 
 @Service

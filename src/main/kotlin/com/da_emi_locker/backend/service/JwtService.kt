@@ -34,18 +34,31 @@ class JwtService {
     /**
      * Generate a JWT with a unique token id (jti) for single-device login.
      * @param tokenId must be stored in dealer.currentTokenId; only this token will be accepted.
+     * @param role "dealer", "sales_executive", or empty for admin
+     * @param salesExecutiveId if role=sales_executive, the SE id
      */
-    fun generateToken(dealerId: String, email: String, tokenId: String): String {
+    fun generateToken(
+        dealerId: String,
+        email: String,
+        tokenId: String,
+        role: String = "dealer",
+        salesExecutiveId: String? = null
+    ): String {
         val now = Date()
         val expiryDate = Date(now.time + expiration)
         
-        logger.debug("Generating token for dealerId: $dealerId, jti: $tokenId, expiry: $expiryDate")
+        logger.debug("Generating token for dealerId: $dealerId, role: $role, jti: $tokenId, expiry: $expiryDate")
         
-        return Jwts.builder()
+        val builder = Jwts.builder()
             .subject(dealerId)
             .claim("email", email)
             .claim("dealerId", dealerId)
             .claim("jti", tokenId)
+            .claim("role", role)
+        
+        salesExecutiveId?.let { builder.claim("salesExecutiveId", it) }
+        
+        return builder
             .issuedAt(now)
             .expiration(expiryDate)
             .signWith(getSigningKey())
@@ -104,6 +117,34 @@ class JwtService {
                 .payload
             
             claims.get("jti", String::class.java)
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /** Extract role from JWT: "dealer", "sales_executive", or null. */
+    fun getRoleFromToken(token: String): String? {
+        return try {
+            val claims = Jwts.parser()
+                .verifyWith(getSigningKey())
+                .build()
+                .parseSignedClaims(token)
+                .payload
+            claims.get("role", String::class.java)
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /** Extract salesExecutiveId from JWT (null for dealers/admin). */
+    fun getSalesExecutiveIdFromToken(token: String): String? {
+        return try {
+            val claims = Jwts.parser()
+                .verifyWith(getSigningKey())
+                .build()
+                .parseSignedClaims(token)
+                .payload
+            claims.get("salesExecutiveId", String::class.java)
         } catch (e: Exception) {
             null
         }

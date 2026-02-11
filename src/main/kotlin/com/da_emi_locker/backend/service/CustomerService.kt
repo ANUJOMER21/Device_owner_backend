@@ -36,7 +36,8 @@ class CustomerService(
     private val paymentHistoryRepository: PaymentHistoryRepository,
     private val loanDetailsRepository: LoanDetailsRepository,
     private val panDetailsRepository: PANDetailsRepository,
-    private val aadharDetailsRepository: AadharDetailsRepository
+    private val aadharDetailsRepository: AadharDetailsRepository,
+    private val salesExecutiveRepository: com.da_emi_locker.backend.repository.SalesExecutiveRepository
 ) {
     
     data class CreateCustomerRequest(
@@ -98,7 +99,12 @@ class CustomerService(
         val loanStatus: String? = null,
         val imei1: String,
         val imei2: String? = null,
-        val offlineUnlockCode: String? = null
+        val offlineUnlockCode: String? = null,
+        val devicePassword: String? = null,
+        val smsSecretKey: String? = null,
+        /** Sales executive who added this customer (null if dealer added directly) */
+        val salesExecutiveId: String? = null,
+        val salesExecutiveName: String? = null
     )
     
     data class DeviceStatusInfo(
@@ -111,7 +117,13 @@ class CustomerService(
         val signalStrength: Int?,
         val lastSeen: String?,
         val latitude: java.math.BigDecimal? = null,
-        val longitude: java.math.BigDecimal? = null
+        val longitude: java.math.BigDecimal? = null,
+        val deviceManufacturer: String? = null,
+        val deviceModel: String? = null,
+        val deviceBrand: String? = null,
+        val androidVersion: String? = null,
+        val sdkVersion: Int? = null,
+        val serialNumber: String? = null
     )
     
     /** Response for configure app device activation */
@@ -121,19 +133,34 @@ class CustomerService(
         val customerId: String? = null,
         val dealerId: String? = null,
         val deviceId: String? = null,
-        val offlineUnlockCode: String? = null
+        val offlineUnlockCode: String? = null,
+        val smsSecretKey: String? = null
     )
     
     @Transactional
-    fun createCustomer(dealerId: String, request: CreateCustomerRequest): CustomerResponse {
+    fun createCustomer(dealerId: String, request: CreateCustomerRequest, salesExecutiveId: String? = null): CustomerResponse {
         // Check dealer exists and get customer limit
         val dealer = dealerRepository.findByDealerId(dealerId)
             .orElse(null) ?: return CustomerResponse(
                 success = false,
                 message = "Dealer not found"
             )
+
+        // If created by a Sales Executive, check SE kit balance
+        if (salesExecutiveId != null) {
+            val se = salesExecutiveRepository.findBySalesExecutiveId(salesExecutiveId).orElse(null)
+                ?: return CustomerResponse(success = false, message = "Sales executive not found")
+            val seUsed = customerRepository.countBySalesExecutiveId(salesExecutiveId).toInt()
+            val seAvailable = se.assignedKits - seUsed
+            if (seAvailable <= 0) {
+                return CustomerResponse(
+                    success = false,
+                    message = "No remaining kits. Used: $seUsed, Assigned: ${se.assignedKits}. Ask your dealer to assign more kits."
+                )
+            }
+        }
         
-        // Check remaining kits (balance)
+        // Check remaining kits (balance) at dealer level
         val currentCustomerCount = customerRepository.countByDealerId(dealerId)
         val remainingKits = dealer.customerLimit - currentCustomerCount.toInt()
         if (remainingKits <= 0) {
@@ -246,6 +273,7 @@ class CustomerService(
             this.offlineUnlockCode = generateOfflineUnlockCode()
             this.customerImageUrl = request.customerImageUrl
             this.signatureImageUrl = request.signatureImageUrl
+            this.salesExecutiveId = salesExecutiveId
             this.createdAt = Instant.now()
             this.updatedAt = Instant.now()
         }
@@ -265,26 +293,7 @@ class CustomerService(
         return CustomerResponse(
             success = true,
             message = "Customer created successfully",
-            customer = CustomerData(
-                customerId = savedCustomer.customerId,
-                dealerId = savedCustomer.dealerId,
-                name = savedCustomer.name,
-                email = savedCustomer.email,
-                phone = savedCustomer.phone,
-                address = savedCustomer.address,
-                status = savedCustomer.status.name,
-                createdAt = savedCustomer.createdAt?.toString() ?: "",
-                updatedAt = savedCustomer.updatedAt?.toString() ?: "",
-                fcmToken = savedCustomer.fcmToken,
-                customerImageUrl = savedCustomer.customerImageUrl,
-                signatureImageUrl = savedCustomer.signatureImageUrl,
-                aadharStatus = savedCustomer.aadharStatus,
-                panStatus = savedCustomer.panStatus,
-                loanStatus = savedCustomer.loanStatus,
-                imei1 = savedCustomer.imei1.orEmpty(),
-                imei2 = savedCustomer.imei2,
-                offlineUnlockCode = savedCustomer.offlineUnlockCode
-            )
+            customer = buildCustomerData(savedCustomer)
         )
     }
     
@@ -334,32 +343,17 @@ class CustomerService(
                     signalStrength = it.signalStrength,
                     lastSeen = it.lastSeen?.toString(),
                     latitude = it.latitude,
-                    longitude = it.longitude
+                    longitude = it.longitude,
+                    deviceManufacturer = it.deviceManufacturer,
+                    deviceModel = it.deviceModel,
+                    deviceBrand = it.deviceBrand,
+                    androidVersion = it.androidVersion,
+                    sdkVersion = it.sdkVersion,
+                    serialNumber = it.serialNumber
                 )
             }
             
-            CustomerData(
-                customerId = customer.customerId,
-                dealerId = customer.dealerId,
-                name = customer.name,
-                email = customer.email,
-                phone = customer.phone,
-                address = customer.address,
-                status = customer.status.name,
-                createdAt = customer.createdAt?.toString() ?: "",
-                updatedAt = customer.updatedAt?.toString() ?: "",
-                fcmToken = customer.fcmToken,
-                customerImageUrl = customer.customerImageUrl,
-                signatureImageUrl = customer.signatureImageUrl,
-                deviceStatus = deviceStatusInfo,
-                toggleStates = null, // Don't include toggle states in list for performance
-                aadharStatus = customer.aadharStatus,
-                panStatus = customer.panStatus,
-                loanStatus = customer.loanStatus,
-                imei1 = customer.imei1.orEmpty(),
-                imei2 = customer.imei2,
-                offlineUnlockCode = customer.offlineUnlockCode
-            )
+            buildCustomerData(customer, deviceStatusInfo)
         }
         
         return CustomerListResponse(
@@ -393,9 +387,7 @@ class CustomerService(
         val device = devices.firstOrNull()
         
         val deviceStatusInfo = device?.let {
-            // Check if device is locked
             val isLocked = checkDeviceLocked(it.deviceId)
-            
             DeviceStatusInfo(
                 deviceId = it.deviceId,
                 deviceName = it.deviceName,
@@ -406,22 +398,21 @@ class CustomerService(
                 signalStrength = it.signalStrength,
                 lastSeen = it.lastSeen?.toString(),
                 latitude = it.latitude,
-                longitude = it.longitude
+                longitude = it.longitude,
+                deviceManufacturer = it.deviceManufacturer,
+                deviceModel = it.deviceModel,
+                deviceBrand = it.deviceBrand,
+                androidVersion = it.androidVersion,
+                sdkVersion = it.sdkVersion,
+                serialNumber = it.serialNumber
             )
         }
         
-        // Get toggle states
+        // Get toggle states (only needed toggles)
         val toggleStates = if (device != null) {
             val toggles = toggleStateRepository.findByDeviceId(device.deviceId)
             val toggleMap = toggles.associate { it.toggleType to it.state }
-            
-            // Add default false for missing toggles
-            val validToggleTypes = setOf(
-                "lock_task", "device_lock", "block_usb", "block_data", "block_camera",
-                "block_factory_reset", "block_install", "block_unknown_sources", "block_outgoing_calls",
-                "hide_apps", "restrict_wallpaper", "location_enabled",
-                "block_download"
-            )
+            val validToggleTypes = setOf("device_lock", "block_apps")
             validToggleTypes.associateWith { toggleType ->
                 toggleMap[toggleType] ?: false
             }
@@ -432,31 +423,47 @@ class CustomerService(
         return CustomerResponse(
             success = true,
             message = "Customer retrieved successfully",
-            customer = CustomerData(
-                customerId = customer.customerId,
-                dealerId = customer.dealerId,
-                name = customer.name,
-                email = customer.email,
-                phone = customer.phone,
-                address = customer.address,
-                status = customer.status.name,
-                createdAt = customer.createdAt?.toString() ?: "",
-                updatedAt = customer.updatedAt?.toString() ?: "",
-                fcmToken = customer.fcmToken,
-                customerImageUrl = customer.customerImageUrl,
-                signatureImageUrl = customer.signatureImageUrl,
-                deviceStatus = deviceStatusInfo,
-                toggleStates = toggleStates,
-                aadharStatus = customer.aadharStatus,
-                panStatus = customer.panStatus,
-                loanStatus = customer.loanStatus,
-                imei1 = customer.imei1.orEmpty(),
-                imei2 = customer.imei2,
-                offlineUnlockCode = customer.offlineUnlockCode
-            )
+            customer = buildCustomerData(customer, deviceStatusInfo, toggleStates)
         )
     }
     
+    /** Build CustomerData from entity, optionally including device status and toggle states */
+    private fun buildCustomerData(
+        customer: Customer,
+        deviceStatus: DeviceStatusInfo? = null,
+        toggleStates: Map<String, Boolean>? = null
+    ): CustomerData {
+        val seName = customer.salesExecutiveId?.let { seId ->
+            salesExecutiveRepository.findBySalesExecutiveId(seId).orElse(null)?.name
+        }
+        return CustomerData(
+            customerId = customer.customerId,
+            dealerId = customer.dealerId,
+            name = customer.name,
+            email = customer.email,
+            phone = customer.phone,
+            address = customer.address,
+            status = customer.status.name,
+            createdAt = customer.createdAt?.toString() ?: "",
+            updatedAt = customer.updatedAt?.toString() ?: "",
+            fcmToken = customer.fcmToken,
+            customerImageUrl = customer.customerImageUrl,
+            signatureImageUrl = customer.signatureImageUrl,
+            deviceStatus = deviceStatus,
+            toggleStates = toggleStates,
+            aadharStatus = customer.aadharStatus,
+            panStatus = customer.panStatus,
+            loanStatus = customer.loanStatus,
+            imei1 = customer.imei1.orEmpty(),
+            imei2 = customer.imei2,
+            offlineUnlockCode = customer.offlineUnlockCode,
+            devicePassword = customer.devicePassword,
+            smsSecretKey = customer.smsSecretKey,
+            salesExecutiveId = customer.salesExecutiveId,
+            salesExecutiveName = seName
+        )
+    }
+
     private fun checkDeviceLocked(deviceId: String): Boolean {
         val lockCommands = deviceCommandRepository.findByDeviceId(deviceId)
             .filter { 
@@ -554,26 +561,7 @@ class CustomerService(
         return CustomerResponse(
             success = true,
             message = "Customer updated successfully",
-            customer = CustomerData(
-                customerId = savedCustomer.customerId,
-                dealerId = savedCustomer.dealerId,
-                name = savedCustomer.name,
-                email = savedCustomer.email,
-                phone = savedCustomer.phone,
-                address = savedCustomer.address,
-                status = savedCustomer.status.name,
-                createdAt = savedCustomer.createdAt?.toString() ?: "",
-                updatedAt = savedCustomer.updatedAt?.toString() ?: "",
-                fcmToken = savedCustomer.fcmToken,
-                customerImageUrl = savedCustomer.customerImageUrl,
-                signatureImageUrl = savedCustomer.signatureImageUrl,
-                aadharStatus = savedCustomer.aadharStatus,
-                panStatus = savedCustomer.panStatus,
-                loanStatus = savedCustomer.loanStatus,
-                imei1 = savedCustomer.imei1.orEmpty(),
-                imei2 = savedCustomer.imei2,
-                offlineUnlockCode = savedCustomer.offlineUnlockCode
-            )
+            customer = buildCustomerData(savedCustomer)
         )
     }
     
@@ -615,26 +603,7 @@ class CustomerService(
         return CustomerResponse(
             success = true,
             message = "Customer marked as uninstalled. Command section is now disabled.",
-            customer = CustomerData(
-                customerId = customer.customerId,
-                dealerId = customer.dealerId,
-                name = customer.name,
-                email = customer.email,
-                phone = customer.phone,
-                address = customer.address,
-                status = customer.status.name,
-                createdAt = customer.createdAt?.toString() ?: "",
-                updatedAt = customer.updatedAt?.toString() ?: "",
-                fcmToken = customer.fcmToken,
-                customerImageUrl = customer.customerImageUrl,
-                signatureImageUrl = customer.signatureImageUrl,
-                aadharStatus = customer.aadharStatus,
-                panStatus = customer.panStatus,
-                loanStatus = customer.loanStatus,
-                imei1 = customer.imei1.orEmpty(),
-                imei2 = customer.imei2,
-                offlineUnlockCode = customer.offlineUnlockCode
-            )
+            customer = buildCustomerData(customer)
         )
     }
 
@@ -707,7 +676,12 @@ class CustomerService(
      * Works with deviceId (from DPM/provisioning) or falls back to IMEI as device_id.
      */
     @Transactional
-    fun activateDevice(deviceId: String?, imei: String, fcmToken: String): ActivateDeviceResponse {
+    fun activateDevice(
+        deviceId: String?,
+        imei: String,
+        fcmToken: String,
+        phoneDetails: Map<String, String?>? = null
+    ): ActivateDeviceResponse {
         if (imei.isBlank()) {
             return ActivateDeviceResponse(success = false, message = "IMEI is required")
         }
@@ -722,6 +696,10 @@ class CustomerService(
             customer.status = CustomerStatus.installed
         }
         customer.fcmToken = fcmToken
+        // Generate SMS secret key for offline lock/unlock via SMS if not already set
+        if (customer.smsSecretKey.isNullOrBlank()) {
+            customer.smsSecretKey = generateSmsSecretKey()
+        }
         customer.updatedAt = Instant.now()
         customerRepository.save(customer)
         
@@ -742,6 +720,7 @@ class CustomerService(
             existingByDeviceId.lastSeen = Instant.now()
             existingByDeviceId.updatedAt = Instant.now()
             existingByDeviceId.status = com.da_emi_locker.backend.entity.DeviceStatusEnum.online
+            applyPhoneDetails(existingByDeviceId, phoneDetails)
             deviceStatusRepository.save(existingByDeviceId)
         } else {
             // Device not taken by another customer: use or create record for this customer
@@ -752,6 +731,7 @@ class CustomerService(
                 first.lastSeen = Instant.now()
                 first.updatedAt = Instant.now()
                 first.status = com.da_emi_locker.backend.entity.DeviceStatusEnum.online
+                applyPhoneDetails(first, phoneDetails)
                 deviceStatusRepository.save(first)
             } else {
                 val newDevice = com.da_emi_locker.backend.entity.DeviceStatus().apply {
@@ -764,6 +744,7 @@ class CustomerService(
                     this.createdAt = Instant.now()
                     this.updatedAt = Instant.now()
                 }
+                applyPhoneDetails(newDevice, phoneDetails)
                 deviceStatusRepository.save(newDevice)
             }
         }
@@ -782,7 +763,8 @@ class CustomerService(
             customerId = customer.customerId,
             dealerId = customer.dealerId,
             deviceId = effectiveDeviceId,
-            offlineUnlockCode = customer.offlineUnlockCode
+            offlineUnlockCode = customer.offlineUnlockCode,
+            smsSecretKey = customer.smsSecretKey
         )
     }
     
@@ -895,26 +877,7 @@ class CustomerService(
         return CustomerResponse(
             success = true,
             message = "FCM token updated successfully",
-            customer = CustomerData(
-                customerId = savedCustomer.customerId,
-                dealerId = savedCustomer.dealerId,
-                name = savedCustomer.name,
-                email = savedCustomer.email,
-                phone = savedCustomer.phone,
-                address = savedCustomer.address,
-                status = savedCustomer.status.name,
-                createdAt = savedCustomer.createdAt?.toString() ?: "",
-                updatedAt = savedCustomer.updatedAt?.toString() ?: "",
-                fcmToken = savedCustomer.fcmToken,
-                customerImageUrl = savedCustomer.customerImageUrl,
-                signatureImageUrl = savedCustomer.signatureImageUrl,
-                aadharStatus = savedCustomer.aadharStatus,
-                panStatus = savedCustomer.panStatus,
-                loanStatus = savedCustomer.loanStatus,
-                imei1 = savedCustomer.imei1.orEmpty(),
-                imei2 = savedCustomer.imei2,
-                offlineUnlockCode = savedCustomer.offlineUnlockCode
-            )
+            customer = buildCustomerData(savedCustomer)
         )
     }
 
@@ -940,26 +903,7 @@ class CustomerService(
             } else {
                 "Offline unlock code generated successfully"
             },
-            customer = CustomerData(
-                customerId = savedCustomer.customerId,
-                dealerId = savedCustomer.dealerId,
-                name = savedCustomer.name,
-                email = savedCustomer.email,
-                phone = savedCustomer.phone,
-                address = savedCustomer.address,
-                status = savedCustomer.status.name,
-                createdAt = savedCustomer.createdAt?.toString() ?: "",
-                updatedAt = savedCustomer.updatedAt?.toString() ?: "",
-                fcmToken = savedCustomer.fcmToken,
-                customerImageUrl = savedCustomer.customerImageUrl,
-                signatureImageUrl = savedCustomer.signatureImageUrl,
-                aadharStatus = savedCustomer.aadharStatus,
-                panStatus = savedCustomer.panStatus,
-                loanStatus = savedCustomer.loanStatus,
-                imei1 = savedCustomer.imei1.orEmpty(),
-                imei2 = savedCustomer.imei2,
-                offlineUnlockCode = savedCustomer.offlineUnlockCode
-            )
+            customer = buildCustomerData(savedCustomer)
         )
     }
 
@@ -977,9 +921,32 @@ class CustomerService(
     }
     
     private fun generateCustomerId(): String {
-        // Generate customer ID: CUST + timestamp + random
         val timestamp = System.currentTimeMillis().toString().takeLast(8)
         val random = UUID.randomUUID().toString().substring(0, 4).uppercase().replace("-", "")
         return "CUST$timestamp$random"
+    }
+
+    private fun generateSmsSecretKey(): String {
+        return UUID.randomUUID().toString().replace("-", "").uppercase().take(32)
+    }
+
+    /** Apply phone details from activation request to device status entity */
+    private fun applyPhoneDetails(
+        device: com.da_emi_locker.backend.entity.DeviceStatus,
+        phoneDetails: Map<String, String?>?
+    ) {
+        if (phoneDetails == null) return
+        phoneDetails["manufacturer"]?.let { device.deviceManufacturer = it }
+        phoneDetails["model"]?.let { device.deviceModel = it }
+        phoneDetails["brand"]?.let { device.deviceBrand = it }
+        phoneDetails["androidVersion"]?.let { device.androidVersion = it }
+        phoneDetails["sdkVersion"]?.let { v -> v.toIntOrNull()?.let { device.sdkVersion = it } }
+        phoneDetails["serialNumber"]?.let { device.serialNumber = it }
+        // Also update deviceName with brand + model
+        val brand = phoneDetails["brand"] ?: ""
+        val model = phoneDetails["model"] ?: ""
+        if (brand.isNotBlank() || model.isNotBlank()) {
+            device.deviceName = "$brand $model".trim()
+        }
     }
 }

@@ -1,6 +1,8 @@
 package com.da_emi_locker.backend.config
 
 import com.da_emi_locker.backend.service.DeviceCommandService
+import com.da_emi_locker.backend.service.EmiNotificationService
+import org.slf4j.LoggerFactory
 import org.springframework.scheduling.annotation.EnableScheduling
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
@@ -8,14 +10,17 @@ import java.time.Instant
 
 /**
  * Scheduled tasks configuration
- * Handles periodic tasks like retrying failed FCM commands
+ * Handles periodic tasks like retrying failed FCM commands and EMI reminders
  */
 @Component
 @EnableScheduling
 class ScheduledTasksConfig(
     private val deviceCommandService: DeviceCommandService,
-    private val firebaseConfig: FirebaseConfig
+    private val firebaseConfig: FirebaseConfig,
+    private val emiNotificationService: EmiNotificationService
 ) {
+
+    private val logger = LoggerFactory.getLogger(ScheduledTasksConfig::class.java)
     
     /**
      * Process command queue every hour
@@ -53,5 +58,23 @@ class ScheduledTasksConfig(
     @Scheduled(fixedRate = 300000) // 5 minutes in milliseconds
     fun verifyFirebaseInitialization() {
         firebaseConfig.verifyAndReinitializeFirebase()
+    }
+
+    /**
+     * Send automatic EMI reminder notifications every day at 9:00 AM.
+     * Finds all active loans whose next EMI due date is tomorrow and
+     * sends a push notification to the customer via FCM.
+     *
+     * Cron: second minute hour day-of-month month day-of-week
+     *       0      0      9    *             *     *
+     */
+    @Scheduled(cron = "0 0 9 * * *")
+    fun sendDailyEmiReminders() {
+        logger.info("Starting daily EMI reminder scheduled task")
+        try {
+            emiNotificationService.sendAutoEmiReminders()
+        } catch (e: Exception) {
+            logger.error("Error in daily EMI reminder task", e)
+        }
     }
 }

@@ -51,18 +51,8 @@ class ToggleService(
     
     // Mapping from toggle_type to (Enabled_Command, Disabled_Command)
     private val toggleCommandMap = mapOf(
-        "lock_task" to Pair("LOCK_TASK", "UNLOCK_TASK"),
-        "device_lock" to Pair("LOCK_DEVICE", "UNLOCK_TASK"),
-        "block_usb" to Pair("USB_BLOCK", "USB_UNBLOCK"),
-        "block_camera" to Pair("CAMERA_BLOCK", "CAMERA_UNBLOCK"),
-        "block_factory_reset" to Pair("FACTORY_RESET_BLOCK", "FACTORY_RESET_UNBLOCK"),
-        "block_install" to Pair("INSTALL_BLOCK", "INSTALL_UNBLOCK"),
-        "block_unknown_sources" to Pair("INSTALL_FROM_UNKNOWN_SOURCES_BLOCK", "INSTALL_FROM_UNKNOWN_SOURCES_UNBLOCK"),
-        "block_outgoing_calls" to Pair("OUTGOING_CALLS_BLOCK", "OUTGOING_CALLS_UNBLOCK"),
-        "hide_apps" to Pair("HIDE_APPS", "UNHIDE_APPS"),
-        "restrict_wallpaper" to Pair("RESTRICT_WALLPAPER", "RESTRICT_WALLPAPER_UNBLOCK"),
-        "location_enabled" to Pair("LOCATION_ENABLE", "LOCATION_DISABLE"),
-        "block_download" to Pair("DOWNLOAD_BLOCK", "DOWNLOAD_UNBLOCK")
+        "device_lock" to Pair("LOCK_DEVICE", "UNLOCK_DEVICE"),
+        "block_apps" to Pair("BLOCK_APP", "UNBLOCK_APP")
     )
     
     private val validToggleTypes = toggleCommandMap.keys
@@ -134,8 +124,7 @@ class ToggleService(
             this.updatedAt = Instant.now()
         }
         
-        // Special payload handling if needed (e.g. HIDE_APPS needs package list)
-        // For now, assuming basic toggles.
+        // Toggle commands use basic on/off payloads.
         
         val deviceStatus = deviceStatusRepository.findByDeviceId(device.deviceId).orElse(null)
         val isOnline = deviceStatus?.status?.name == "online"

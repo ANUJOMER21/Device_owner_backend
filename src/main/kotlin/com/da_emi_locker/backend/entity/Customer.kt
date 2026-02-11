@@ -61,6 +61,18 @@ class Customer : BaseEntity() {
     /** When true, admin requested delete for installed/active customer; full delete will run after device verifies REMOVE_DEVICE_OWNER. */
     @Column(name = "pending_deletion", nullable = false)
     var pendingDeletion: Boolean = false
+
+    /** Password set by dealer on customer device via DPM */
+    @Column(name = "device_password", length = 100)
+    var devicePassword: String? = null
+
+    /** Secret key for offline lock/unlock via SMS (encrypted SMS communication) */
+    @Column(name = "sms_secret_key", length = 64)
+    var smsSecretKey: String? = null
+
+    /** Sales executive who added this customer (null if dealer added directly) */
+    @Column(name = "sales_executive_id", length = 50)
+    var salesExecutiveId: String? = null
 }
 
 enum class CustomerStatus {

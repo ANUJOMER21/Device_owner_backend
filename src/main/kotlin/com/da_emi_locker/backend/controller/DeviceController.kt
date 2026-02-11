@@ -223,6 +223,30 @@ class DeviceController(
         ))
     }
     
+    /** Get SIM change history for a customer */
+    @GetMapping("/sim-history/{customerId}")
+    fun getSimHistory(
+        @RequestAttribute("dealerId") dealerId: String?,
+        @PathVariable customerId: String
+    ): ResponseEntity<Map<String, Any>> {
+        if (dealerId == null) {
+            return ResponseEntity.status(401).body(mapOf("success" to false, "message" to "Unauthorized"))
+        }
+        val history = simDetailsService.getHistoryForDealer(customerId, dealerId)
+            ?: return ResponseEntity.status(403).body(mapOf("success" to false, "message" to "Access denied"))
+        
+        val historyData = history.map { sim ->
+            mapOf(
+                "id" to (sim.id ?: 0),
+                "simData" to (sim.simData ?: "{}"),
+                "phoneNumber" to (sim.phoneNumber ?: ""),
+                "createdAt" to (sim.createdAt?.toString() ?: ""),
+                "updatedAt" to (sim.updatedAt?.toString() ?: "")
+            )
+        }
+        return ResponseEntity.ok(mapOf("success" to true, "history" to historyData))
+    }
+
     @GetMapping("/sim-details/{customerId}")
     fun getSimDetails(
         @RequestAttribute("dealerId") dealerId: String?,
@@ -484,5 +508,87 @@ class DeviceController(
         } else {
             ResponseEntity.status(400).body(response)
         }
+    }
+
+    // ── Offline Lock/Unlock via SMS ─────────────────────────────────────────
+
+    data class SmsCommandRequestDto(
+        @field:NotBlank(message = "Customer ID is required")
+        val customerId: String = "",
+        @field:NotBlank(message = "Action is required (LOCK or UNLOCK)")
+        val action: String = "" // "LOCK" or "UNLOCK"
+    )
+
+    data class SmsCommandResponseDto(
+        val success: Boolean,
+        val message: String,
+        val smsMessage: String? = null,
+        val customerPhone: String? = null
+    )
+
+    /**
+     * Generate an encrypted SMS command for offline lock/unlock.
+     * Dealer sends this SMS from their phone to the customer's device.
+     * The configure app has an SMS receiver that decrypts and executes the command.
+     * Returns the encrypted SMS text that the dealer should send.
+     */
+    @PostMapping("/offline-sms-command")
+    fun generateOfflineSmsCommand(
+        @RequestAttribute("dealerId") dealerId: String?,
+        @Valid @RequestBody request: SmsCommandRequestDto
+    ): ResponseEntity<SmsCommandResponseDto> {
+        if (dealerId == null) {
+            return ResponseEntity.status(401).body(
+                SmsCommandResponseDto(success = false, message = "Unauthorized")
+            )
+        }
+        val customer = customerService.getCustomer(request.customerId.trim(), dealerId)
+        if (!customer.success || customer.customer == null) {
+            return ResponseEntity.status(400).body(
+                SmsCommandResponseDto(success = false, message = customer.message)
+            )
+        }
+        val cust = customer.customer!!
+        val smsSecretKey = cust.smsSecretKey
+        if (smsSecretKey.isNullOrBlank()) {
+            return ResponseEntity.status(400).body(
+                SmsCommandResponseDto(success = false, message = "SMS secret key not configured for this customer. Device must be activated first.")
+            )
+        }
+        val action = request.action.uppercase().trim()
+        if (action != "LOCK" && action != "UNLOCK") {
+            return ResponseEntity.status(400).body(
+                SmsCommandResponseDto(success = false, message = "Action must be LOCK or UNLOCK")
+            )
+        }
+        // Generate encrypted SMS message: DAEMI:<action>:<timestamp>:<hmac>
+        val timestamp = System.currentTimeMillis().toString()
+        val dataToSign = "$action:$timestamp"
+        val hmac = generateHmac(dataToSign, smsSecretKey)
+        val smsMessage = "DAEMI:$action:$timestamp:$hmac"
+
+        // Get the customer's phone number for the dealer to send SMS to
+        val simDetails = simDetailsService.getLatestForDealer(request.customerId.trim(), dealerId)
+        val customerPhone = if (simDetails?.phoneNumber?.isNotBlank() == true) {
+            simDetails.phoneNumber
+        } else {
+            cust.phone
+        }
+
+        return ResponseEntity.ok(
+            SmsCommandResponseDto(
+                success = true,
+                message = "SMS command generated. Send this message to the customer's phone number.",
+                smsMessage = smsMessage,
+                customerPhone = customerPhone
+            )
+        )
+    }
+
+    private fun generateHmac(data: String, key: String): String {
+        val mac = javax.crypto.Mac.getInstance("HmacSHA256")
+        mac.init(javax.crypto.spec.SecretKeySpec(key.toByteArray(), "HmacSHA256"))
+        val hash = mac.doFinal(data.toByteArray())
+        return hash.joinToString("") { "%02x".format(it) }.take(16)
     }
 }

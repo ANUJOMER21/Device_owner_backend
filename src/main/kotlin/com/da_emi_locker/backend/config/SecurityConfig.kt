@@ -124,6 +124,8 @@ class SecurityConfig(
                     .requestMatchers("/api/admin/login").permitAll() // Admin login endpoint - MUST come before /api/admin/**
                     .requestMatchers("/api/admin/health", "/api/admin/health/**").permitAll() // Admin health + S3 verification - MUST come before /api/admin/**
                     .requestMatchers("/api/dealers/register").permitAll() // Public registration
+                    // Device Owner provisioning APK upload endpoint (uses API key header internally)
+                    .requestMatchers("/api/device-owner/provisioning/apk").permitAll()
                     .requestMatchers("/api/qr-code/**").hasRole("DEALER") // Dealer QR + customer Device Owner QR require dealer auth
                     .requestMatchers("/api/contact").permitAll() // Contact form is public
                     .requestMatchers("/api/test/**").permitAll() // Test endpoints - remove in production
@@ -135,7 +137,7 @@ class SecurityConfig(
                     .requestMatchers("/api/uploads/**").authenticated() // uploads require auth
                     // Role-based endpoints - MUST come AFTER public endpoints
                     .requestMatchers("/api/admin/**").hasRole("ADMIN") // Admin endpoints require ROLE_ADMIN (excludes /login and /health which are above)
-                    .requestMatchers("/api/dealers/**", "/api/customers/**", "/api/dashboard/**", "/api/activities/**", "/api/devices/**", "/api/support/**", "/api/payments/**").hasRole("DEALER") // Dealer endpoints require ROLE_DEALER
+                    .requestMatchers("/api/dealers/**", "/api/customers/**", "/api/dashboard/**", "/api/activities/**", "/api/devices/**", "/api/support/**", "/api/payments/**", "/api/emi-notifications/**").hasRole("DEALER") // Dealer endpoints require ROLE_DEALER
                     .anyRequest().authenticated() // All other endpoints require authentication
             }
             .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter::class.java)

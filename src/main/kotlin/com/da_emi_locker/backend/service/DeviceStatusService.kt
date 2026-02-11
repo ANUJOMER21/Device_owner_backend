@@ -203,7 +203,7 @@ class DeviceStatusService(
     
     private fun checkDeviceLocked(deviceId: String): Boolean {
         // Check for lock-related commands in an active state.
-        // We consider both LOCK_DEVICE and LOCK_TASK commands as indicating a locked device.
+        // We consider LOCK_DEVICE commands as indicating a locked device.
         val activeStatuses = listOf(
             com.da_emi_locker.backend.entity.CommandStatus.pending,
             com.da_emi_locker.backend.entity.CommandStatus.sent,
@@ -211,8 +211,7 @@ class DeviceStatusService(
             com.da_emi_locker.backend.entity.CommandStatus.executed
         )
         val lockCommandTypes = setOf(
-            DeviceCommandService.CommandAction.LOCK_DEVICE.value,
-            DeviceCommandService.CommandAction.LOCK_TASK.value
+            DeviceCommandService.CommandAction.LOCK_DEVICE.value
         )
         val lockCommands = deviceCommandRepository.findByDeviceId(deviceId)
             .filter { command ->

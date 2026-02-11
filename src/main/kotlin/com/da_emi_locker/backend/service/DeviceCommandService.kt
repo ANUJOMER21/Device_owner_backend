@@ -8,6 +8,7 @@ import com.da_emi_locker.backend.entity.DeviceCommand
 import com.da_emi_locker.backend.entity.DeviceStatusEnum
 import com.da_emi_locker.backend.repository.ActivityRepository
 import com.da_emi_locker.backend.repository.CustomerRepository
+import com.da_emi_locker.backend.repository.DealerRepository
 import com.da_emi_locker.backend.repository.DeviceCommandRepository
 import com.da_emi_locker.backend.repository.DeviceStatusRepository
 import org.springframework.stereotype.Service
@@ -22,9 +23,11 @@ class DeviceCommandService(
     private val deviceCommandRepository: DeviceCommandRepository,
     private val deviceStatusRepository: DeviceStatusRepository,
     private val customerRepository: CustomerRepository,
+    private val dealerRepository: DealerRepository,
     private val activityRepository: ActivityRepository,
     private val customerService: CustomerService,
     private val s3StorageService: S3StorageService,
+    private val wallpaperGeneratorService: WallpaperGeneratorService,
     private val fcmService: FCMService,
     private val objectMapper: com.fasterxml.jackson.databind.ObjectMapper
 ) {
@@ -37,103 +40,37 @@ class DeviceCommandService(
      * and what the mobile app will interpret.
      */
     enum class CommandAction(val value: String, val requiresPayload: Boolean = false) {
-        // Device Lock & Task Management
-        LOCK_TASK("LOCK_TASK"),
-        UNLOCK_TASK("UNLOCK_TASK"),
+        // Device Lock & Unlock (kiosk mode)
         LOCK_DEVICE("LOCK_DEVICE"),
-        REBOOT("REBOOT"),
-        
-        // USB Management
-        USB_BLOCK("USB_BLOCK"),
-        USB_UNBLOCK("USB_UNBLOCK"),
-        
-        // Camera Control
-        CAMERA_BLOCK("CAMERA_BLOCK"),
-        CAMERA_UNBLOCK("CAMERA_UNBLOCK"),
-        
-        // Factory Reset
-        FACTORY_RESET_BLOCK("FACTORY_RESET_BLOCK"),
-        FACTORY_RESET_UNBLOCK("FACTORY_RESET_UNBLOCK"),
-        
-        // Status Bar
-        STATUS_BAR_BLOCK("STATUS_BAR_BLOCK"),
-        
-        // Wallpaper (requires url payload)
-        SET_WALLPAPER("SET_WALLPAPER", requiresPayload = true),
-        
-        // App Visibility
-        // For HIDE_APPS/UNHIDE_APPS, payload is now optional:
-        // - If payload.packages present => hide/unhide specific apps
-        // - If payload is empty/omitted => device auto-hides/unhides all user apps
-        HIDE_APPS("HIDE_APPS"),
-        UNHIDE_APPS("UNHIDE_APPS"),
-        HIDE_DO_APP("HIDE_DO_APP"),
-        UNHIDE_DO_APP("UNHIDE_DO_APP"),
-        SUSPEND_DO_APP("SUSPEND_DO_APP"),
-        UNSUSPEND_DO_APP("UNSUSPEND_DO_APP"),
-        
-        // Install/Uninstall Management
-        INSTALL_BLOCK("INSTALL_BLOCK"),
-        INSTALL_UNBLOCK("INSTALL_UNBLOCK"),
-        UNINSTALL_BLOCK("UNINSTALL_BLOCK"), // Can have optional payload
-        UNINSTALL_UNBLOCK("UNINSTALL_UNBLOCK"), // Can have optional payload
-        
-        // Unknown Sources
-        INSTALL_FROM_UNKNOWN_SOURCES_BLOCK("INSTALL_FROM_UNKNOWN_SOURCES_BLOCK"),
-        INSTALL_FROM_UNKNOWN_SOURCES_UNBLOCK("INSTALL_FROM_UNKNOWN_SOURCES_UNBLOCK"),
-        
-        // App Suspend/Unsuspend
-        APP_SUSPEND("APP_SUSPEND", requiresPayload = true),
-        APP_UNSUSPEND("APP_UNSUSPEND", requiresPayload = true),
-        
-        // App Enable/Disable
-        APP_ENABLE("APP_ENABLE", requiresPayload = true),
-        APP_DISABLE("APP_DISABLE", requiresPayload = true),
-        
-        // Background Data Restrictions
-        BACKGROUND_DATA_RESTRICT("BACKGROUND_DATA_RESTRICT", requiresPayload = true),
-        BACKGROUND_DATA_UNRESTRICT("BACKGROUND_DATA_UNRESTRICT", requiresPayload = true),
-        
-        // Default App Management
-        DEFAULT_APP_SET("DEFAULT_APP_SET", requiresPayload = true),
-        DEFAULT_APP_CLEAROUT("DEFAULT_APP_CLEAROUT", requiresPayload = true),
-        
-        // Outgoing Calls
-        OUTGOING_CALLS_BLOCK("OUTGOING_CALLS_BLOCK"),
-        OUTGOING_CALLS_UNBLOCK("OUTGOING_CALLS_UNBLOCK"),
-        
-        // Text to Speech
-        SPEAK("SPEAK", requiresPayload = true),
-        // EMI Alert: notification + optional TTS (custom or preset text)
-        EMI_ALERT("EMI_ALERT", requiresPayload = true),
-        
-        // Configure app: remove device owner, restart location service, update FCM token, refresh/relaunch
-        REMOVE_DEVICE_OWNER("REMOVE_DEVICE_OWNER"),
-        RESTART_LOCATION_SERVICE("RESTART_LOCATION_SERVICE"),
-        UPDATE_FCM_TOKEN("UPDATE_FCM_TOKEN"),
-        REFRESH("REFRESH"),
-        
-        // Reboot schedules
-        REBOOT_12HR("REBOOT_12HR"),
-        REBOOT_24HR("REBOOT_24HR"),
-        
-        // Wallpaper restrict (toggle: customer cannot change wallpaper)
-        RESTRICT_WALLPAPER("RESTRICT_WALLPAPER"),
-        RESTRICT_WALLPAPER_UNBLOCK("RESTRICT_WALLPAPER_UNBLOCK"),
-        
-        // Location (enable-disable toggle)
-        LOCATION_ENABLE("LOCATION_ENABLE"),
-        LOCATION_DISABLE("LOCATION_DISABLE"),
-        
-        // Download block (toggle)
-        DOWNLOAD_BLOCK("DOWNLOAD_BLOCK"),
-        DOWNLOAD_UNBLOCK("DOWNLOAD_UNBLOCK"),
-        
-        // Legacy/compatibility
         UNLOCK_DEVICE("UNLOCK_DEVICE"),
-        TOGGLE("TOGGLE"),
-        FETCH_LATEST_LOCATION("FETCH_LATEST_LOCATION"),
-        GET_SIM_DETAILS("GET_SIM_DETAILS");
+
+        // Set Wallpaper - backend generates custom wallpaper with "Pay EMI" + dealer details
+        SET_WALLPAPER("SET_WALLPAPER"),
+
+        // Set/Remove Password via DPM on customer device
+        SET_PASSWORD("SET_PASSWORD", requiresPayload = true),
+        REMOVE_PASSWORD("REMOVE_PASSWORD"),
+
+        // Reboot device
+        REBOOT("REBOOT"),
+
+        // Play audio to remind customer to pay EMI
+        PLAY_AUDIO("PLAY_AUDIO"),
+
+        // Block/Unblock social media apps (Facebook, WhatsApp, WA Business, Instagram, Snapchat)
+        BLOCK_APP("BLOCK_APP"),
+        UNBLOCK_APP("UNBLOCK_APP"),
+
+        // Open all required permissions on the device
+        OPEN_PERMISSION("OPEN_PERMISSION"),
+
+        // Deactivate / Uninstall (remove device owner)
+        DEACTIVATE("DEACTIVATE"),
+
+        // Internal/system commands
+        REFRESH("REFRESH"),
+        GET_SIM_DETAILS("GET_SIM_DETAILS"),
+        FETCH_LATEST_LOCATION("FETCH_LATEST_LOCATION");
 
         companion object {
             /**
@@ -267,7 +204,70 @@ class DeviceCommandService(
             val device = deviceStatusRepository.findByCustomerId(customer.customerId).firstOrNull()
                 ?: return DeviceActionResponse(success = false, message = "No device found for customer")
 
-            // Create and save command - build commandData from payload map or reason string
+            // Special handling for SET_WALLPAPER: generate custom wallpaper with dealer details
+            if (actionEnum == CommandAction.SET_WALLPAPER) {
+                val dealer = dealerRepository.findByDealerId(customer.dealerId).orElse(null)
+                val wallpaperUrl = wallpaperGeneratorService.generateAndUploadWallpaper(
+                    dealerName = dealer?.businessName ?: dealer?.name ?: "Dealer",
+                    dealerPhone = dealer?.phone ?: "",
+                    dealerAddress = dealer?.address ?: "",
+                    customerName = customer.name
+                )
+                if (wallpaperUrl == null) {
+                    return DeviceActionResponse(success = false, message = "Failed to generate wallpaper")
+                }
+                val wallpaperPayload = objectMapper.writeValueAsString(mapOf("url" to wallpaperUrl))
+                val command = DeviceCommand().apply {
+                    this.deviceId = device.deviceId
+                    this.customerId = customer.customerId
+                    this.commandType = actionEnum.value
+                    this.commandData = wallpaperPayload
+                    this.status = CommandStatus.pending
+                    this.expiryAt = Instant.now().plus(24, ChronoUnit.HOURS)
+                    this.retryCount = 0
+                    this.createdAt = Instant.now()
+                    this.updatedAt = Instant.now()
+                }
+                val savedCommand = deviceCommandRepository.save(command)
+                // Also send RESTRICT_WALLPAPER as a follow-up so user can't change it
+                val restrictCommand = DeviceCommand().apply {
+                    this.deviceId = device.deviceId
+                    this.customerId = customer.customerId
+                    this.commandType = "RESTRICT_WALLPAPER"
+                    this.commandData = null
+                    this.status = CommandStatus.pending
+                    this.expiryAt = Instant.now().plus(24, ChronoUnit.HOURS)
+                    this.retryCount = 0
+                    this.createdAt = Instant.now()
+                    this.updatedAt = Instant.now()
+                }
+                deviceCommandRepository.save(restrictCommand)
+                logActivityAndProcess(savedCommand, customer, device, activityCustomerId)
+                CompletableFuture.runAsync {
+                    try { processCommandImmediately(restrictCommand, customer, device) } catch (_: Exception) {}
+                }
+                return DeviceActionResponse(success = true, message = "Wallpaper generated and sent to device", commandId = savedCommand.id, status = savedCommand.status.name)
+            }
+
+            // Special handling for SET_PASSWORD: store password in customer record
+            if (actionEnum == CommandAction.SET_PASSWORD) {
+                val password = payload?.get("password") ?: reason
+                if (password.isNullOrBlank()) {
+                    return DeviceActionResponse(success = false, message = "Password is required for SET_PASSWORD")
+                }
+                customer.devicePassword = password
+                customer.updatedAt = Instant.now()
+                customerRepository.save(customer)
+            }
+
+            // Special handling for REMOVE_PASSWORD: clear stored password
+            if (actionEnum == CommandAction.REMOVE_PASSWORD) {
+                customer.devicePassword = null
+                customer.updatedAt = Instant.now()
+                customerRepository.save(customer)
+            }
+
+            // Build commandData from payload map or reason string
             val commandDataJson: String? = when {
                 !payload.isNullOrEmpty() -> objectMapper.writeValueAsString(payload)
                 !reason.isNullOrBlank() -> {
@@ -278,7 +278,28 @@ class DeviceCommandService(
                         objectMapper.writeValueAsString(reason)
                     }
                 }
-                actionEnum == CommandAction.UNINSTALL_UNBLOCK -> objectMapper.writeValueAsString(mapOf("package" to "com.omer.aocdoapp"))
+                // BLOCK_APP: include the list of social media packages to block
+                actionEnum == CommandAction.BLOCK_APP -> objectMapper.writeValueAsString(mapOf(
+                    "packages" to listOf(
+                        "com.facebook.katana",
+                        "com.facebook.lite",
+                        "com.whatsapp",
+                        "com.whatsapp.w4b",
+                        "com.instagram.android",
+                        "com.snapchat.android"
+                    )
+                ))
+                // UNBLOCK_APP: include the same list to unblock
+                actionEnum == CommandAction.UNBLOCK_APP -> objectMapper.writeValueAsString(mapOf(
+                    "packages" to listOf(
+                        "com.facebook.katana",
+                        "com.facebook.lite",
+                        "com.whatsapp",
+                        "com.whatsapp.w4b",
+                        "com.instagram.android",
+                        "com.snapchat.android"
+                    )
+                ))
                 else -> null
             }
             
@@ -298,14 +319,13 @@ class DeviceCommandService(
             val savedCommand = deviceCommandRepository.save(command)
 
             // Update customer status only for unlock (restore to active)
-            // IMPORTANT: Do NOT mark as uninstalled for REMOVE_DEVICE_OWNER - wait for device to call /deregister
-            if (actionEnum == CommandAction.UNLOCK_DEVICE || actionEnum == CommandAction.UNLOCK_TASK) {
+            if (actionEnum == CommandAction.UNLOCK_DEVICE) {
                 customer.status = CustomerStatus.active
                 customerRepository.save(customer)
             }
-            // Explicitly do NOT mark as uninstalled for REMOVE_DEVICE_OWNER - device must verify via /deregister endpoint
+            // DEACTIVATE = REMOVE_DEVICE_OWNER - device must verify via /deregister endpoint
 
-            // Log activity with actual command name
+            // Log activity
             val activity = Activity().apply {
                 this.customerId = activityCustomerId
                 this.deviceId = device.deviceId
@@ -449,9 +469,9 @@ class DeviceCommandService(
             if (!url.isNullOrBlank()) s3StorageService.deleteObjectByUrl(url)
         }
         
-        // Handle REMOVE_DEVICE_OWNER command verification - if pendingDeletion, cascade delete; else mark uninstalled
+        // Handle DEACTIVATE (or legacy REMOVE_DEVICE_OWNER) command verification - if pendingDeletion, cascade delete; else mark uninstalled
         val customerId = command.customerId // Store in local variable to avoid smart cast issues
-        if (request.success && command.commandType == "REMOVE_DEVICE_OWNER" && customerId != null) {
+        if (request.success && (command.commandType == "DEACTIVATE" || command.commandType == "REMOVE_DEVICE_OWNER") && customerId != null) {
             val customer = customerRepository.findByCustomerId(customerId).orElse(null)
             if (customer != null) {
                 if (customer.pendingDeletion) {
@@ -499,6 +519,28 @@ class DeviceCommandService(
         )
     }
     
+    /** Helper to log activity and trigger async FCM processing for a command. */
+    private fun logActivityAndProcess(
+        savedCommand: DeviceCommand,
+        customer: Customer,
+        device: com.da_emi_locker.backend.entity.DeviceStatus,
+        activityCustomerId: String
+    ) {
+        val activity = Activity().apply {
+            this.customerId = activityCustomerId
+            this.deviceId = device.deviceId
+            this.activityType = "command_created"
+            this.activityDescription = "Command '${savedCommand.commandType}' created and sent to device"
+            this.createdAt = Instant.now()
+        }
+        activityRepository.save(activity)
+        CompletableFuture.runAsync {
+            try { processCommandImmediately(savedCommand, customer, device) } catch (e: Exception) {
+                logger.error("Error in async FCM processing for command ${savedCommand.id}", e)
+            }
+        }
+    }
+
     private data class FcmSendResult(val success: Boolean, val error: String? = null)
 
     /**

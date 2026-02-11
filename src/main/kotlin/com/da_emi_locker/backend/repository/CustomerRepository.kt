@@ -28,6 +28,10 @@ interface CustomerRepository : JpaRepository<Customer, Long> {
     fun existsByCustomerId(customerId: String): Boolean
     
     fun countByDealerId(dealerId: String): Long
+
+    fun countBySalesExecutiveId(salesExecutiveId: String): Long
+
+    fun findBySalesExecutiveId(salesExecutiveId: String): List<Customer>
     
     fun existsByImei1(imei1: String): Boolean
     

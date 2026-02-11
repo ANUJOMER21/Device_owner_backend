@@ -43,6 +43,25 @@ class DeviceStatus : BaseEntity() {
     
     @Column(precision = 11, scale = 8)
     var longitude: java.math.BigDecimal? = null
+
+    // Phone details collected on activation
+    @Column(name = "device_manufacturer", length = 100)
+    var deviceManufacturer: String? = null
+
+    @Column(name = "device_model", length = 100)
+    var deviceModel: String? = null
+
+    @Column(name = "device_brand", length = 100)
+    var deviceBrand: String? = null
+
+    @Column(name = "android_version", length = 20)
+    var androidVersion: String? = null
+
+    @Column(name = "sdk_version")
+    var sdkVersion: Int? = null
+
+    @Column(name = "serial_number", length = 100)
+    var serialNumber: String? = null
 }
 
 enum class DeviceStatusEnum {

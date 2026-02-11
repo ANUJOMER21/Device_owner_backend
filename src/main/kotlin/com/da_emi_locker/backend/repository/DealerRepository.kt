@@ -11,6 +11,8 @@ import java.util.Optional
 interface DealerRepository : JpaRepository<Dealer, Long> {
     
     fun findByEmail(email: String): Optional<Dealer>
+
+    fun findByPhone(phone: String): Optional<Dealer>
     
     fun findByDealerId(dealerId: String): Optional<Dealer>
     

@@ -1,7 +1,9 @@
 package com.da_emi_locker.backend.security
 
 import com.da_emi_locker.backend.entity.DealerStatus
+import com.da_emi_locker.backend.entity.SalesExecutiveStatus
 import com.da_emi_locker.backend.repository.DealerRepository
+import com.da_emi_locker.backend.repository.SalesExecutiveRepository
 import com.da_emi_locker.backend.service.JwtService
 import com.fasterxml.jackson.databind.ObjectMapper
 import jakarta.servlet.FilterChain
@@ -19,6 +21,7 @@ import org.springframework.web.filter.OncePerRequestFilter
 class JwtAuthenticationFilter(
     private val jwtService: JwtService,
     private val dealerRepository: DealerRepository,
+    private val salesExecutiveRepository: SalesExecutiveRepository,
     private val objectMapper: ObjectMapper
 ) : OncePerRequestFilter() {
     
@@ -47,21 +50,66 @@ class JwtAuthenticationFilter(
                 
                 if (isValid) {
                     val dealerId = jwtService.getDealerIdFromToken(token)
+                    val role = jwtService.getRoleFromToken(token) ?: "dealer"
+                    val salesExecutiveId = jwtService.getSalesExecutiveIdFromToken(token)
                     
                     if (dealerId != null && SecurityContextHolder.getContext().authentication == null) {
-                        // Single-device: for dealers, only the token matching current_token_id is valid
+
+                        // ---------- Sales Executive session validation ----------
+                        if (role == "sales_executive" && salesExecutiveId != null) {
+                            val seOpt = salesExecutiveRepository.findBySalesExecutiveId(salesExecutiveId)
+                            if (seOpt.isPresent) {
+                                val se = seOpt.get()
+                                if (!se.isLoggedIn) {
+                                    log.warn("SE $salesExecutiveId token rejected: session ended")
+                                    send401(response, "Session expired. Please login again.")
+                                    return
+                                }
+                                val tokenJti = jwtService.getJtiFromToken(token)
+                                if (se.currentTokenId.isNullOrBlank() || tokenJti != se.currentTokenId) {
+                                    log.warn("SE $salesExecutiveId token rejected: jti mismatch")
+                                    send401(response, "Session expired. Please login again.")
+                                    return
+                                }
+                                if (se.status != SalesExecutiveStatus.active) {
+                                    send401(response, "Account is ${se.status.name}. Please contact your dealer.")
+                                    return
+                                }
+                            } else {
+                                send401(response, "Sales executive not found.")
+                                return
+                            }
+
+                            // SE gets ROLE_DEALER so existing dealer-scoped endpoints work
+                            val authentication = UsernamePasswordAuthenticationToken(
+                                dealerId,
+                                null,
+                                listOf(SimpleGrantedAuthority("ROLE_DEALER"))
+                            )
+                            authentication.details = WebAuthenticationDetailsSource().buildDetails(request)
+                            SecurityContextHolder.getContext().authentication = authentication
+
+                            // Expose both dealerId and salesExecutiveId as request attributes
+                            request.setAttribute("dealerId", dealerId)
+                            request.setAttribute("salesExecutiveId", salesExecutiveId)
+                            request.setAttribute("userRole", "sales_executive")
+                            log.debug("SE $salesExecutiveId (dealer $dealerId) authenticated for: $requestUri")
+
+                            filterChain.doFilter(request, response)
+                            return
+                        }
+
+                        // ---------- Dealer session validation ----------
                         if (dealerId != "admin") {
                             val dealerOpt = dealerRepository.findByDealerId(dealerId)
                             if (dealerOpt.isPresent) {
                                 val dealer = dealerOpt.get()
-                                // DB-based: reject if session was ended (admin logout, suspend, etc.)
                                 if (!dealer.isLoggedIn) {
                                     log.warn("Dealer $dealerId token rejected: session ended (is_logged_in=false)")
                                     send401(response, "Session expired. Please login again.")
                                     return
                                 }
                                 val currentTokenId = dealer.currentTokenId
-                                // Token must match current session (single-device)
                                 if (currentTokenId.isNullOrBlank()) {
                                     log.warn("Dealer $dealerId token rejected: no active session")
                                     send401(response, "Session expired. Please login again.")
@@ -73,7 +121,6 @@ class JwtAuthenticationFilter(
                                     send401(response, "Session expired. Please login again.")
                                     return
                                 }
-                                // Reject if dealer is suspended or inactive (app will logout and show login)
                                 if (dealer.status != DealerStatus.active) {
                                     log.warn("Dealer $dealerId token rejected: account status is ${dealer.status}")
                                     send401(response, if (dealer.status == DealerStatus.suspended)
@@ -103,29 +150,23 @@ class JwtAuthenticationFilter(
                         SecurityContextHolder.getContext().authentication = authentication
                         
                         if (dealerId == "admin") {
-                            // Make adminId available to admin controllers
                             request.setAttribute("adminId", "admin")
                             log.debug("Admin authenticated for: $requestUri")
                         } else {
-                            // Add dealerId to request attribute for easy access in controllers
                             request.setAttribute("dealerId", dealerId)
+                            request.setAttribute("userRole", "dealer")
                             log.debug("Dealer $dealerId authenticated for: $requestUri")
                         }
                     } else if (dealerId == null) {
                         log.warn("Token is valid but dealerId is null for request: $requestUri")
-                        // Don't set authentication - let Spring Security handle it as unauthorized
                     }
                 } else {
                     log.warn("Invalid JWT token for request: $requestUri")
-                    // Don't set authentication - let Spring Security handle it as unauthorized
                 }
             } catch (e: Exception) {
                 log.error("Error processing JWT token for request: $requestUri", e)
-                // Don't set authentication - let Spring Security handle it as unauthorized
             }
         }
-        // If no Authorization header, don't set authentication
-        // Spring Security will handle it based on endpoint requirements
         
         filterChain.doFilter(request, response)
     }
@@ -141,7 +182,6 @@ class JwtAuthenticationFilter(
             "/api/admin/login",
             "/api/admin/health",
             "/api/dealers/register",
-            // /api/qr-code/** requires DEALER auth
             "/api/contact",
             "/api/test",
             "/uploads",

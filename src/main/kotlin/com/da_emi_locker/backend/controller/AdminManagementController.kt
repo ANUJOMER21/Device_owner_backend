@@ -43,7 +43,8 @@ class AdminManagementController(
     private val simDetailsService: SimDetailsService,
     private val deviceOwnerConfigService: DeviceOwnerConfigService,
     private val s3StorageService: S3StorageService,
-    private val objectMapper: ObjectMapper
+    private val objectMapper: ObjectMapper,
+    private val adminMaintenanceService: AdminMaintenanceService
 ) {
     
     // Admin Dashboard
@@ -51,6 +52,36 @@ class AdminManagementController(
     fun getAdminDashboard(): ResponseEntity<AdminDashboardService.AdminDashboardResponse> {
         val response = adminDashboardService.getAdminDashboard()
         return ResponseEntity.ok(response)
+    }
+
+    // ======== MAINTENANCE / DANGER ZONE ========
+
+    data class WipeAllDataRequest(
+        /** Secret must match DB_WIPE_SECRET to execute wipe. */
+        @field:NotBlank(message = "secret is required")
+        val secret: String
+    )
+
+    /**
+     * Danger: Wipe all application data from the database.
+     *
+     * This is intended ONLY for controlled admin environments (e.g. staging).
+     * It deletes customers, dealers, sales executives, commands, device status,
+     * SIM history, loan/docs, payments, activities, tickets, contact submissions,
+     * EMI notifications and device owner config.
+     */
+    @PostMapping("/maintenance/wipe-all")
+    fun wipeAllData(
+        @Valid @RequestBody request: WipeAllDataRequest
+    ): ResponseEntity<Map<String, Any>> {
+        val result = adminMaintenanceService.wipeAllData(request.secret)
+        val status = if (result.success) HttpStatus.OK else HttpStatus.FORBIDDEN
+        return ResponseEntity.status(status).body(
+            mapOf(
+                "success" to result.success,
+                "message" to result.message
+            )
+        )
     }
     
     // Admin Dashboard - Pending Actions (open tickets, failed commands, suspended dealers)
@@ -257,6 +288,22 @@ class AdminManagementController(
                 )
             )
         }
+    }
+
+    /** Admin: Get SIM change history for a customer */
+    @GetMapping("/customers/{customerId}/sim-history")
+    fun adminGetSimHistory(@PathVariable customerId: String): ResponseEntity<Map<String, Any>> {
+        val history = simDetailsService.getHistoryByCustomerId(customerId)
+        val historyData = history.map { sim ->
+            mapOf(
+                "id" to (sim.id ?: 0),
+                "simData" to (sim.simData ?: "{}"),
+                "phoneNumber" to (sim.phoneNumber ?: ""),
+                "createdAt" to (sim.createdAt?.toString() ?: ""),
+                "updatedAt" to (sim.updatedAt?.toString() ?: "")
+            )
+        }
+        return ResponseEntity.ok(mapOf("success" to true, "history" to historyData))
     }
 
     // Admin: generate offline unlock code if missing

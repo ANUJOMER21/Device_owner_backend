@@ -54,7 +54,9 @@ class CustomerController(
         val customerImageUrl: String? = null,
         val signatureImageUrl: String? = null,
         val latitude: java.math.BigDecimal? = null,
-        val longitude: java.math.BigDecimal? = null
+        val longitude: java.math.BigDecimal? = null,
+        val salesExecutiveId: String? = null,
+        val salesExecutiveName: String? = null
     )
     
     private val logger = LoggerFactory.getLogger(CustomerController::class.java)
@@ -175,6 +177,7 @@ class CustomerController(
     @PostMapping
     fun createCustomer(
         @RequestAttribute("dealerId") dealerId: String?,
+        @RequestAttribute(value = "salesExecutiveId", required = false) salesExecutiveId: String?,
         @Valid @RequestBody request: CreateCustomerRequestDto
     ): ResponseEntity<ApiResponse<CustomerDto>> {
         if (dealerId == null) {
@@ -197,7 +200,8 @@ class CustomerController(
                 signatureImageUrl = request.signatureImageUrl,
                 imei1 = request.imei1,
                 imei2 = request.imei2
-            )
+            ),
+            salesExecutiveId = salesExecutiveId
         )
         
         return if (response.success && response.customer != null) {
@@ -221,6 +225,7 @@ class CustomerController(
     @PostMapping(consumes = [MediaType.MULTIPART_FORM_DATA_VALUE])
     fun createCustomerMultipart(
         @RequestAttribute("dealerId") dealerId: String?,
+        @RequestAttribute(value = "salesExecutiveId", required = false) salesExecutiveId: String?,
         @RequestParam("name") name: String,
         @RequestParam("mobile") mobile: String,
         @RequestParam(value = "alternate_mobile", required = false) alternateMobile: String?,
@@ -283,7 +288,8 @@ class CustomerController(
                 signatureImageUrl = signatureImageUrl,
                 imei1 = imei1,
                 imei2 = imei2
-            )
+            ),
+            salesExecutiveId = salesExecutiveId
         )
         
         // If loan details provided, save them
@@ -367,7 +373,9 @@ class CustomerController(
             customerImageUrl = customerData.customerImageUrl,
             signatureImageUrl = customerData.signatureImageUrl,
             latitude = customerData.deviceStatus?.latitude,
-            longitude = customerData.deviceStatus?.longitude
+            longitude = customerData.deviceStatus?.longitude,
+            salesExecutiveId = customerData.salesExecutiveId,
+            salesExecutiveName = customerData.salesExecutiveName
         )
     }
     

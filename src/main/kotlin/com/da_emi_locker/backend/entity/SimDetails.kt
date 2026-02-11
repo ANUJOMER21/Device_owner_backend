@@ -21,4 +21,8 @@ class SimDetails : BaseEntity() {
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "sim_data", columnDefinition = "JSONB")
     var simData: String? = null
+
+    /** Extracted phone number for quick change detection */
+    @Column(name = "phone_number", length = 20)
+    var phoneNumber: String? = null
 }

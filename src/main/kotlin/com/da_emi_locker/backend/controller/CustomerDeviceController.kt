@@ -31,7 +31,14 @@ class CustomerDeviceController(
         @field:NotBlank(message = "IMEI is required")
         val imei: String = "",
         @field:NotBlank(message = "FCM token is required")
-        val fcmToken: String = ""
+        val fcmToken: String = "",
+        // Phone details collected on activation
+        val manufacturer: String? = null,
+        val model: String? = null,
+        val brand: String? = null,
+        val androidVersion: String? = null,
+        val sdkVersion: String? = null,
+        val serialNumber: String? = null
     )
     
     data class UpdateDeviceStatusRequestDto(
@@ -88,10 +95,19 @@ class CustomerDeviceController(
     fun activateDevice(
         @Valid @RequestBody request: ActivateDeviceRequestDto
     ): ResponseEntity<CustomerService.ActivateDeviceResponse> {
+        val phoneDetails = mutableMapOf<String, String?>()
+        request.manufacturer?.let { phoneDetails["manufacturer"] = it }
+        request.model?.let { phoneDetails["model"] = it }
+        request.brand?.let { phoneDetails["brand"] = it }
+        request.androidVersion?.let { phoneDetails["androidVersion"] = it }
+        request.sdkVersion?.let { phoneDetails["sdkVersion"] = it }
+        request.serialNumber?.let { phoneDetails["serialNumber"] = it }
+
         val response = customerService.activateDevice(
             deviceId = request.deviceId?.takeIf { it.isNotBlank() },
             imei = request.imei.trim(),
-            fcmToken = request.fcmToken.trim()
+            fcmToken = request.fcmToken.trim(),
+            phoneDetails = if (phoneDetails.isNotEmpty()) phoneDetails else null
         )
         return if (response.success) {
             ResponseEntity.ok(response)

@@ -1,6 +1,8 @@
 package com.da_emi_locker.backend.service
 
 import com.da_emi_locker.backend.repository.*
+import org.springframework.beans.factory.annotation.Value
+import org.springframework.security.crypto.password.PasswordEncoder
 import jakarta.transaction.Transactional
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Service
@@ -24,7 +26,8 @@ class AdminMaintenanceService(
     private val contactSubmissionRepository: ContactSubmissionRepository,
     private val dealerPaymentRepository: DealerPaymentRepository,
     private val emiNotificationRepository: EmiNotificationRepository,
-    private val deviceOwnerConfigRepository: DeviceOwnerConfigRepository
+    private val deviceOwnerConfigRepository: DeviceOwnerConfigRepository,
+    private val passwordEncoder: PasswordEncoder
 ) {
 
     data class WipeResponse(
@@ -33,14 +36,14 @@ class AdminMaintenanceService(
     )
 
     /**
-     * Secret value required to authorize a full data wipe.
-     * When empty, no secret check is enforced (NOT recommended for production).
-     *
-     * Configure via application properties or environment variable:
-     * DB_WIPE_SECRET=your-strong-secret
+     * Admin password configuration (same as AdminController).
+     * Either admin.password (plain, for dev) or admin.password.hash (BCrypt) can be used.
      */
-    @Value("\${DB_WIPE_SECRET:}")
-    private lateinit var wipeSecret: String
+    @Value("\${admin.password:admin123}")
+    private lateinit var adminPassword: String
+
+    @Value("\${admin.password.hash:}")
+    private var adminPasswordHash: String? = null
 
     /**
      * Danger: Delete (almost) all business data from the database.
@@ -54,14 +57,28 @@ class AdminMaintenanceService(
      * the check is skipped.
      */
     @Transactional
-    fun wipeAllData(providedSecret: String?): WipeResponse {
-        if (this::wipeSecret.isInitialized && wipeSecret.isNotBlank()) {
-            if (providedSecret.isNullOrBlank() || providedSecret != wipeSecret) {
-                return WipeResponse(
-                    success = false,
-                    message = "Invalid or missing wipe secret"
-                )
-            }
+    fun wipeAllData(adminPasswordInput: String?): WipeResponse {
+        // Require admin password re-entry for safety
+        if (adminPasswordInput.isNullOrBlank()) {
+            return WipeResponse(
+                success = false,
+                message = "Admin password is required to wipe data"
+            )
+        }
+
+        val isValidPassword = if (adminPasswordHash.isNullOrBlank()) {
+            // Plain-text comparison (dev / non-production)
+            adminPasswordInput == adminPassword
+        } else {
+            // Compare against configured hash
+            passwordEncoder.matches(adminPasswordInput, adminPasswordHash!!)
+        }
+
+        if (!isValidPassword) {
+            return WipeResponse(
+                success = false,
+                message = "Invalid admin password"
+            )
         }
 
         // Child tables first to satisfy FK constraints

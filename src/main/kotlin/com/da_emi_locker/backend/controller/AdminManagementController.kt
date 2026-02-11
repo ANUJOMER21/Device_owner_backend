@@ -57,9 +57,9 @@ class AdminManagementController(
     // ======== MAINTENANCE / DANGER ZONE ========
 
     data class WipeAllDataRequest(
-        /** Secret must match DB_WIPE_SECRET to execute wipe. */
-        @field:NotBlank(message = "secret is required")
-        val secret: String
+        /** Admin password must match the configured admin-panel password. */
+        @field:NotBlank(message = "password is required")
+        val password: String
     )
 
     /**
@@ -74,7 +74,7 @@ class AdminManagementController(
     fun wipeAllData(
         @Valid @RequestBody request: WipeAllDataRequest
     ): ResponseEntity<Map<String, Any>> {
-        val result = adminMaintenanceService.wipeAllData(request.secret)
+        val result = adminMaintenanceService.wipeAllData(request.password)
         val status = if (result.success) HttpStatus.OK else HttpStatus.FORBIDDEN
         return ResponseEntity.status(status).body(
             mapOf(
